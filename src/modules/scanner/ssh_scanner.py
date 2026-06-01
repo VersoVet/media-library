@@ -100,12 +100,14 @@ async def scan_ssh_source(
 
         for entry in entries:
             try:
-                file_name = entry.filename if hasattr(entry, 'filename') else str(entry)
+                file_name = entry.filename if hasattr(entry, "filename") else str(entry)
 
                 if file_name in (".", ".."):
                     continue
 
-                entry_path = f"{current_path}/{file_name}" if not current_path.endswith("/") else f"{current_path}{file_name}"
+                entry_path = (
+                    f"{current_path}/{file_name}" if not current_path.endswith("/") else f"{current_path}{file_name}"
+                )
 
                 try:
                     attrs = await sftp.stat(entry_path)
@@ -117,7 +119,7 @@ async def scan_ssh_source(
                     continue
 
                 try:
-                    mode = attrs.st_mode if hasattr(attrs, 'st_mode') else attrs.permissions
+                    mode = attrs.st_mode if hasattr(attrs, "st_mode") else attrs.permissions
                     if stat.S_ISDIR(mode):
                         if recursive:
                             await walk_path(sftp, entry_path)
@@ -167,7 +169,9 @@ async def scan_ssh_source(
                         logger.info(f"File already imported (hash match): {remote_path}")
                         continue
 
-                    extracted = metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                    extracted = (
+                        metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                    )
 
                     await utils.import_media_file(
                         db=db,

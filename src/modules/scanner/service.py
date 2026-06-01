@@ -7,8 +7,8 @@ from typing import Any
 import aiosqlite
 
 from src.models import SyncReport
-from src.modules.sources import service as sources_service
 from src.modules.scanner import dropbox_scanner, local_scanner, ssh_scanner
+from src.modules.sources import service as sources_service
 
 logger = logging.getLogger(__name__)
 

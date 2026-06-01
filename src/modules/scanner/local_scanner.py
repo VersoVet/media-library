@@ -1,6 +1,5 @@
 """Local filesystem source scanner."""
 
-import json
 import logging
 import mimetypes
 from pathlib import Path
