@@ -81,12 +81,12 @@ curl -X POST http://localhost:8202/api/media/123e4567-e89b-12d3-a456-42661417400
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/search` | Full-text search with filters |
+| GET | `/api/search` | Full-text search or list all media if query empty |
 | GET | `/api/tags` | List all tags with counts |
 | GET | `/api/tags/{tag_name}/media` | Get media by tag |
 
 ### Query Parameters (for `/api/search`)
-- `q` (required): Search query
+- `q` (optional, default ""): Search query. If empty, lists all media
 - `media_type` (optional): 'image' or 'video'
 - `limit` (optional, default 20): Max results
 - `offset` (optional, default 0): Pagination offset
@@ -95,6 +95,12 @@ curl -X POST http://localhost:8202/api/media/123e4567-e89b-12d3-a456-42661417400
 ```bash
 # Search for "radiography" images
 curl "http://localhost:8202/api/search?q=radiography&media_type=image&limit=20"
+
+# List all media (empty query)
+curl "http://localhost:8202/api/search?limit=100"
+
+# List all images only
+curl "http://localhost:8202/api/search?media_type=image&limit=50"
 
 # List all tags
 curl http://localhost:8202/api/tags
@@ -115,6 +121,7 @@ curl "http://localhost:8202/api/tags/surgery/media?media_type=video"
 | PUT | `/api/sources/{id}` | Update source config |
 | DELETE | `/api/sources/{id}` | Delete source |
 | POST | `/api/sources/{id}/toggle` | Enable/disable source |
+| GET | `/api/sources/{id}/logs` | Get scan logs for source (50 most recent) |
 
 ### Source Types & Config
 
@@ -183,6 +190,9 @@ curl -X POST http://localhost:8202/api/sources \
 
 # Toggle source (enable/disable)
 curl -X POST "http://localhost:8202/api/sources/1/toggle?enabled=false"
+
+# Get scan logs for a source (50 most recent)
+curl http://localhost:8202/api/sources/1/logs
 ```
 
 ---
@@ -207,6 +217,49 @@ curl -X POST http://localhost:8202/api/scanner/run/1
 
 ---
 
+## Deduplication & Quality Preservation
+
+### Checksum System
+Media files are automatically deduplicated using SHA256 file hashes:
+- Each file is hashed upon import
+- Hash is stored in `file_hash` field of media table
+- Before importing, scanner checks if hash already exists
+- Duplicates are skipped automatically and counted in `files_skipped`
+- Works across all source types (Dropbox, Local, SSH)
+
+### Quality Preservation
+- **Original files**: Stored in full quality on Dropbox (`/media-library/{id}.{ext}`)
+- **Thumbnails**: Generated in WebP format (quality=80) stored locally
+- **Metadata**: EXIF data extracted and stored for images, ffprobe metadata for videos
+- No lossy compression applied to originals
+
+---
+
+## Dashboard
+
+Access the interactive dashboard at `/static/` with the following features:
+
+### Library Tab
+- **Search**: Full-text search by title, description, or tags
+- **Filters**: Filter by media type (image/video) or specific tag
+- **Tag Cloud**: Clickable tags showing media count
+- **Thumbnails**: Preview images with fallback gradient background
+- **Grid View**: Responsive media item grid with tag display
+
+### Configuration Tab
+- **Add/Edit Sources**: Create Dropbox, Local, or SSH scan sources
+- **Source Management**: Enable/disable, delete sources
+- **Cron Scheduling**: Set custom scan intervals (5-field cron)
+- **Auto-Tag Toggle**: Enable/disable automatic tag suggestions per source
+
+### Scan Logs Tab
+- **Scan History**: View logs from all sources
+- **Statistics**: Files found, imported, skipped per scan
+- **Error Tracking**: View error messages for failed imports
+- **Timeline**: Sorted by start time, newest first
+
+---
+
 ## Response Models
 
 ### MediaItem
@@ -221,6 +274,7 @@ curl -X POST http://localhost:8202/api/scanner/run/1
   "source_id": 1,
   "source_path": "...",
   "file_size": 12345,
+  "file_hash": "sha256_hash_hex_string",
   "metadata": {
     "width": 1920,
     "height": 1080,
@@ -252,6 +306,23 @@ curl -X POST http://localhost:8202/api/scanner/run/1
   "files_skipped": 5,
   "errors": ["filename: error message"],
   "duration_seconds": 123.45
+}
+```
+
+### ScanLog
+```json
+{
+  "id": 1,
+  "source_id": 1,
+  "started_at": "2026-01-01T12:00:00",
+  "finished_at": "2026-01-01T12:05:30",
+  "files_found": 50,
+  "files_imported": 45,
+  "files_skipped": 5,
+  "errors": [
+    "photo001.jpg: File not found",
+    "photo002.jpg: Invalid format"
+  ]
 }
 ```
 
