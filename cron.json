@@ -1,0 +1,18 @@
+{
+  "tasks": [
+    {
+      "id": "scan-all-sources",
+      "name": "Scan All Enabled Sources",
+      "description": "Periodically scan all enabled media sources for new files",
+      "schedule": "0 */6 * * *",
+      "command": {
+        "type": "endpoint",
+        "endpoint": "/api/scanner/run",
+        "method": "POST"
+      },
+      "timeout_seconds": 600,
+      "enabled": true,
+      "notify_on_failure": true
+    }
+  ]
+}

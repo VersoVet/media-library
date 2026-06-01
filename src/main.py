@@ -7,7 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from onyx_sdk import OnyxClient
+
+try:
+    from onyx_sdk import OnyxClient
+except ImportError:
+    OnyxClient = None
 
 from src.database import get_db_context, init_db
 from src.models import HealthResponse, InfoResponse
@@ -35,16 +39,18 @@ async def lifespan(app: FastAPI):
     global scheduler, onyx_client
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    # Initialize OnyxClient
-    try:
-        logger.info("Initializing OnyxClient...")
-        onyx_client = OnyxClient()
-        logger.info("Calling OnyxClient.start()...")
-        result = onyx_client.start()
-        logger.info(f"OnyxClient started (result={result})")
-    except Exception as e:
-        logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
-        onyx_client = None
+    # Initialize OnyxClient - signal UP status
+    if OnyxClient:
+        try:
+            logger.info("Initializing OnyxClient...")
+            onyx_client = OnyxClient()
+            onyx_client.start()
+            logger.info("OnyxClient started - UP status")
+        except Exception as e:
+            logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
+            onyx_client = None
+    else:
+        logger.warning("OnyxClient not available")
 
     logger.info("Initializing database...")
     await init_db()
@@ -91,7 +97,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Shutdown - signal DOWN status
     if scheduler:
         scheduler.shutdown()
         logger.info("APScheduler shutdown")
@@ -113,6 +119,12 @@ async def _scan_source_scheduled(source_id: int) -> None:
         source = await sources_service.get_source(db, source_id)
         if source:
             logger.info(f"Running scheduled scan for source {source_id}")
+            # Signal WORKING status
+            if onyx_client:
+                try:
+                    onyx_client.set_status("WORKING", f"Scanning source {source_id}")
+                except Exception:
+                    pass
             await scanner_service.scan_source(db, source)
         await db.close()
     except Exception as e:
@@ -147,7 +159,7 @@ app.include_router(scanner_routes.router)
 # Mount static files (dashboard)
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
 # Health check endpoint
@@ -219,6 +231,35 @@ async def info() -> InfoResponse:
     )
 
 
+# Cron status endpoint
+@app.get("/cron")
+async def cron_status() -> dict[str, any]:
+    """Get cron scheduler status.
+
+    Returns:
+        Scheduler status with running jobs.
+    """
+    if not scheduler:
+        return {"status": "disabled"}
+
+    try:
+        jobs = scheduler.get_jobs()
+        return {
+            "status": "running",
+            "jobs_count": len(jobs),
+            "jobs": [
+                {
+                    "id": job.id,
+                    "next_run_time": str(job.next_run_time),
+                }
+                for job in jobs
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Failed to get cron status: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # Root endpoint
 @app.get("/")
 async def root() -> dict[str, str]:
@@ -232,6 +273,8 @@ async def root() -> dict[str, str]:
         "docs": "/docs",
         "health": "/health",
         "info": "/info",
+        "dashboard": "/static/",
+        "cron": "/cron",
     }
 
 
