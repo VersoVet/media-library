@@ -122,16 +122,25 @@ async def regenerate_video_thumbnails(
                     tmp_path = tmp.name
 
                 try:
-                    # Generate GIF
-                    result = await service.generate_video_thumbnail(
-                        tmp_path, video_id
+                    # Generate GIF with timeout protection
+                    import asyncio
+                    result = await asyncio.wait_for(
+                        service.generate_video_thumbnail(tmp_path, video_id),
+                        timeout=20.0,
                     )
                     if result:
                         success_count += 1
-                        logger.info(f"Successfully regenerated GIF for {video_id}")
+                        logger.info(f"✓ GIF generated for {video_id}")
                     else:
                         failure_count += 1
-                        errors.append(f"{video_id}: GIF generation returned None")
+                        error_msg = f"{video_id}: Generation failed (None returned)"
+                        errors.append(error_msg)
+                        logger.warning(error_msg)
+                except asyncio.TimeoutError:
+                    failure_count += 1
+                    error_msg = f"{video_id}: Timeout (>20s)"
+                    errors.append(error_msg)
+                    logger.error(error_msg)
                 finally:
                     # Clean up temp file
                     Path(tmp_path).unlink(missing_ok=True)

@@ -72,50 +72,71 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
     """Generate lightweight GIF thumbnail for video.
 
     Extracts frames from 0.5-1.5 seconds and creates a short looping GIF.
+    Falls back to static first frame if GIF generation fails.
 
     Args:
         dropbox_path: Path to video in Dropbox (must be downloaded first).
         media_id: Media ID (for filename).
 
     Returns:
-        Path to generated GIF thumbnail, or None if generation fails.
+        Path to generated GIF thumbnail, or None if generation fails completely.
 
     Note:
         This function expects the video file to be available locally.
         Use with a temporary file path.
     """
     await ensure_thumbnail_dir()
-    # Change extension to .gif instead of .webp
     thumb_path = THUMBNAIL_DIR / f"{media_id}.gif"
 
     try:
-        # Extract 5 frames over 1 second (0.5-1.5 seconds) for animation
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Extract frames
-            result = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i",
-                    dropbox_path,
-                    "-ss",
-                    "0.5",
-                    "-t",
-                    "1",
-                    "-vf",
-                    "scale=320:-1,fps=5",
-                    os.path.join(tmpdir, "frame_%d.png"),
-                ],
-                capture_output=True,
-                timeout=30,
-            )
+            # Extract 5 frames over 1 second (0.5-1.5 seconds) for animation
+            # Use shorter timeout and error handling for problematic videos
+            try:
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-t", "2",  # Limit input duration to first 2 seconds
+                        "-i",
+                        dropbox_path,
+                        "-ss",
+                        "0.5",
+                        "-t",
+                        "1",
+                        "-vf",
+                        "scale=320:-1,fps=5",
+                        os.path.join(tmpdir, "frame_%d.png"),
+                    ],
+                    capture_output=True,
+                    timeout=15,  # Reduced timeout from 30s to 15s
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(f"ffmpeg timeout for {media_id}, trying fallback")
+                # Try to extract just the first frame as fallback
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-t", "0.1",
+                        "-i",
+                        dropbox_path,
+                        "-vf",
+                        "scale=320:-1",
+                        os.path.join(tmpdir, "frame_1.png"),
+                    ],
+                    capture_output=True,
+                    timeout=10,
+                )
 
             if result.returncode != 0:
-                logger.warning(f"ffmpeg extract failed: {result.stderr.decode()}")
+                logger.warning(
+                    f"ffmpeg extract failed for {media_id}: "
+                    f"{result.stderr.decode()[:200]}"
+                )
                 return None
 
             # Load frames and create GIF
             frames = []
-            for i in range(1, 6):  # 5 frames
+            for i in range(1, 6):
                 frame_path = os.path.join(tmpdir, f"frame_{i}.png")
                 if os.path.exists(frame_path):
                     try:
@@ -126,7 +147,10 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                             bg = Image.new("RGB", img.size, (240, 240, 240))
                             if img.mode == "P":
                                 img = img.convert("RGBA")
-                            bg.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                            bg.paste(
+                                img,
+                                mask=(img.split()[-1] if img.mode == "RGBA" else None),
+                            )
                             img = bg
                         frames.append(img)
                     except Exception as e:
@@ -153,6 +177,9 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
     except FileNotFoundError:
         logger.warning("ffmpeg not found, skipping video thumbnail")
         return None
+    except subprocess.TimeoutExpired:
+        logger.error(f"Video processing timeout for {media_id}")
+        return None
     except Exception as e:
-        logger.error(f"Failed to generate video thumbnail: {e}")
+        logger.error(f"Failed to generate video thumbnail {media_id}: {e}")
         return None
