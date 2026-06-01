@@ -304,10 +304,95 @@ async def _scan_ssh_source(
     else:
         raise ValueError("SSH config must have either 'key' or 'password_key'")
 
+    recursive = bool(source_row.get("recursive", 1))
+    auto_tag = bool(source_row.get("auto_tag", 1))
+
     files_found = 0
     files_imported = 0
     files_skipped = 0
     errors: list[str] = []
+
+    async def walk_path(sftp: Any, current_path: str) -> None:
+        """Recursively walk directory on SSH server."""
+        nonlocal files_found, files_imported, files_skipped, errors
+
+        try:
+            entries = await sftp.listdir(current_path)
+        except Exception as e:
+            logger.warning(f"Failed to list {current_path}: {e}")
+            return
+
+        for entry in entries:
+            try:
+                file_name = entry.filename if hasattr(entry, 'filename') else str(entry)
+                entry_path = f"{current_path}/{file_name}".lstrip("/")
+
+                # Stat the file to determine if it's a file or directory
+                stat = await sftp.stat(entry_path)
+
+                if stat.is_dir():
+                    if recursive:
+                        await walk_path(sftp, entry_path)
+                    continue
+
+                if not stat.is_file():
+                    continue
+
+                files_found += 1
+                remote_path = entry_path
+
+                try:
+                    # Detect MIME type
+                    mime_type, _ = mimetypes.guess_type(file_name)
+                    if not mime_type:
+                        mime_type = "application/octet-stream"
+
+                    if not (metadata.is_supported_image(mime_type) or metadata.is_supported_video(mime_type)):
+                        files_skipped += 1
+                        continue
+
+                    # Check if already imported
+                    cursor = await db.execute(
+                        "SELECT id FROM media WHERE source_id = ? AND source_path = ?",
+                        (source_id, remote_path),
+                    )
+                    if await cursor.fetchone():
+                        files_skipped += 1
+                        continue
+
+                    # Download file via SFTP
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                        tmp_path = tmp.name
+
+                    await sftp.get(remote_path, tmp_path)
+                    file_bytes = Path(tmp_path).read_bytes()
+                    Path(tmp_path).unlink()
+
+                    # Extract metadata
+                    if metadata.is_supported_image(mime_type):
+                        extracted = metadata.extract_image_metadata(file_bytes)
+                    else:
+                        extracted = {}
+
+                    # Import media
+                    await _import_media_file(
+                        db=db,
+                        file_bytes=file_bytes,
+                        source_id=source_id,
+                        source_path=remote_path,
+                        title=Path(file_name).stem,
+                        mime_type=mime_type,
+                        auto_tag=auto_tag,
+                        extracted_metadata=extracted,
+                    )
+
+                    files_imported += 1
+
+                except Exception as e:
+                    logger.error(f"Failed to import {remote_path}: {e}")
+                    errors.append(f"{remote_path}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error processing entry {file_name}: {e}")
 
     try:
         async with asyncssh.connect(
@@ -320,71 +405,7 @@ async def _scan_ssh_source(
         ) as conn:
             # List files remotely
             async with await conn.start_sftp_client() as sftp:
-                try:
-                    entries = await sftp.listdir(path)
-                except FileNotFoundError:
-                    logger.warning(f"SSH path not found: {path}")
-                    entries = []
-
-                for entry in entries:
-                    # asyncssh returns SFTPName objects
-                    if not entry.is_file():
-                        continue
-
-                    files_found += 1
-                    file_name = entry.filename
-                    remote_path = f"{path}/{file_name}".lstrip("/")
-
-                    try:
-                        # Detect MIME type
-                        mime_type, _ = mimetypes.guess_type(file_name)
-                        if not mime_type:
-                            mime_type = "application/octet-stream"
-
-                        if not (metadata.is_supported_image(mime_type) or metadata.is_supported_video(mime_type)):
-                            files_skipped += 1
-                            continue
-
-                        # Check if already imported
-                        cursor = await db.execute(
-                            "SELECT id FROM media WHERE source_id = ? AND source_path = ?",
-                            (source_id, remote_path),
-                        )
-                        if await cursor.fetchone():
-                            files_skipped += 1
-                            continue
-
-                        # Download file via SFTP
-                        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                            tmp_path = tmp.name
-
-                        await sftp.get(remote_path, tmp_path)
-                        file_bytes = Path(tmp_path).read_bytes()
-                        Path(tmp_path).unlink()
-
-                        # Extract metadata
-                        if metadata.is_supported_image(mime_type):
-                            extracted = metadata.extract_image_metadata(file_bytes)
-                        else:
-                            extracted = {}
-
-                        # Import media
-                        await _import_media_file(
-                            db=db,
-                            file_bytes=file_bytes,
-                            source_id=source_id,
-                            source_path=remote_path,
-                            title=Path(file_name).stem,
-                            mime_type=mime_type,
-                            auto_tag=False,  # SSH import doesn't auto-tag by default
-                            extracted_metadata=extracted,
-                        )
-
-                        files_imported += 1
-
-                    except Exception as e:
-                        logger.error(f"Failed to import {remote_path}: {e}")
-                        errors.append(f"{remote_path}: {str(e)}")
+                await walk_path(sftp, path)
 
     except Exception as e:
         logger.error(f"SSH connection failed: {e}")
