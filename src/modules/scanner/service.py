@@ -349,13 +349,19 @@ async def _scan_ssh_source(
                     logger.warning(f"Failed to stat {entry_path}: {e}")
                     continue
 
-                # Check if it's a directory using stat module
-                if stat.S_ISDIR(attrs.st_mode):
-                    if recursive:
-                        await walk_path(sftp, entry_path)
-                    continue
-
-                if not stat.S_ISREG(attrs.st_mode):
+                # Check if it's a directory - asyncssh SFTPAttrs has 'permissions' attribute
+                # Directories have mode with S_IFDIR bit set
+                try:
+                    mode = attrs.st_mode if hasattr(attrs, 'st_mode') else attrs.permissions
+                    if stat.S_ISDIR(mode):
+                        if recursive:
+                            await walk_path(sftp, entry_path)
+                        continue
+                    if not stat.S_ISREG(mode):
+                        continue
+                except Exception as e:
+                    logger.debug(f"Could not determine file type for {file_name}: {e}, attrs={dir(attrs)}")
+                    # If we can't determine type, skip it
                     continue
 
                 files_found += 1
