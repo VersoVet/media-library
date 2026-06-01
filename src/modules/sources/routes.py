@@ -7,7 +7,7 @@ from aiosqlite import Connection
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.database import get_db
-from src.models import ScanSource
+from src.models import ScanLog, ScanSource
 
 from . import service
 
@@ -174,3 +174,52 @@ async def toggle_source(
         return ScanSource(**source)
     else:
         raise HTTPException(status_code=500, detail="Failed to fetch toggled source")
+
+
+@router.get("/{source_id}/logs", response_model=list[ScanLog])
+async def get_source_logs(
+    source_id: int,
+    db: Connection = Depends(get_db),
+) -> list[ScanLog]:
+    """Get scan logs for a source.
+
+    Args:
+        source_id: Source ID.
+        db: Database connection.
+
+    Returns:
+        List of scan logs.
+    """
+    cursor = await db.execute(
+        """
+        SELECT id, source_id, started_at, finished_at, files_found,
+               files_imported, files_skipped, errors_json
+        FROM scan_logs
+        WHERE source_id = ?
+        ORDER BY started_at DESC
+        LIMIT 50
+        """,
+        (source_id,),
+    )
+    rows = await cursor.fetchall()
+
+    logs = []
+    for row in rows:
+        row_dict = dict(row)
+        import json
+
+        errors = json.loads(row_dict.get("errors_json", "[]"))
+        logs.append(
+            ScanLog(
+                id=row_dict["id"],
+                source_id=row_dict["source_id"],
+                started_at=row_dict["started_at"],
+                finished_at=row_dict["finished_at"],
+                files_found=row_dict["files_found"],
+                files_imported=row_dict["files_imported"],
+                files_skipped=row_dict["files_skipped"],
+                errors=errors,
+            )
+        )
+
+    return logs

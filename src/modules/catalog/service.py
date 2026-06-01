@@ -32,6 +32,7 @@ async def create_media(
     source_id: int | None = None,
     source_path: str | None = None,
     tags: list[str] | None = None,
+    file_hash: str | None = None,
 ) -> str:
     """Create new media entry in database.
 
@@ -47,6 +48,7 @@ async def create_media(
         source_id: Source ID if imported from a source.
         source_path: Path in source.
         tags: List of tags.
+        file_hash: SHA256 hash for deduplication.
 
     Returns:
         Media ID.
@@ -64,10 +66,10 @@ async def create_media(
         """
         INSERT INTO media (
             id, title, description, media_type, mime_type,
-            dropbox_path, source_id, source_path, file_size,
+            dropbox_path, source_id, source_path, file_size, file_hash,
             width, height, duration_seconds, metadata_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             media_id,
@@ -79,6 +81,7 @@ async def create_media(
             source_id,
             source_path,
             file_size,
+            file_hash,
             metadata.get("width"),
             metadata.get("height"),
             metadata.get("duration_seconds"),

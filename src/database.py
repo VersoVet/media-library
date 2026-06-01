@@ -30,6 +30,7 @@ async def init_db() -> None:
                 source_id INTEGER,
                 source_path TEXT,
                 file_size INTEGER NOT NULL,
+                file_hash TEXT,
                 width INTEGER,
                 height INTEGER,
                 duration_seconds REAL,
@@ -40,6 +41,13 @@ async def init_db() -> None:
             )
             """
         )
+
+        # Migration: add file_hash column if it doesn't exist
+        try:
+            await db.execute("SELECT file_hash FROM media LIMIT 1")
+        except Exception:
+            # Column doesn't exist, add it
+            await db.execute("ALTER TABLE media ADD COLUMN file_hash TEXT")
 
         # Tags table
         await db.execute(

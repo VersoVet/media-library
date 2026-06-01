@@ -1,5 +1,6 @@
 """Scanner service for multi-source orchestration."""
 
+import hashlib
 import json
 import logging
 import mimetypes
@@ -20,6 +21,18 @@ from src.modules.tagger import service as tagger_service
 from src.modules.thumbnails import service as thumbnail_service
 
 logger = logging.getLogger(__name__)
+
+
+def _calculate_file_hash(file_bytes: bytes) -> str:
+    """Calculate SHA256 hash of file bytes.
+
+    Args:
+        file_bytes: File content.
+
+    Returns:
+        SHA256 hex digest.
+    """
+    return hashlib.sha256(file_bytes).hexdigest()
 
 
 async def scan_source(
@@ -105,6 +118,19 @@ async def _scan_dropbox_source(
             # Download file
             file_bytes = await dropbox_service.download_file(file_path)
 
+            # Calculate file hash for deduplication
+            file_hash = _calculate_file_hash(file_bytes)
+
+            # Check if already imported by hash
+            cursor = await db.execute(
+                "SELECT id FROM media WHERE file_hash = ?",
+                (file_hash,),
+            )
+            if await cursor.fetchone():
+                files_skipped += 1
+                logger.info(f"File already imported (hash match): {file_path}")
+                continue
+
             # Detect MIME type
             mime_type, _ = mimetypes.guess_type(file_name)
             if not mime_type:
@@ -131,6 +157,7 @@ async def _scan_dropbox_source(
                 mime_type=mime_type,
                 auto_tag=auto_tag,
                 extracted_metadata=extracted,
+                file_hash=file_hash,
             )
 
             files_imported += 1
@@ -202,6 +229,19 @@ async def _scan_local_source(
             # Read file
             file_bytes = file_path.read_bytes()
 
+            # Calculate file hash for deduplication
+            file_hash = _calculate_file_hash(file_bytes)
+
+            # Check if already imported by hash
+            cursor = await db.execute(
+                "SELECT id FROM media WHERE file_hash = ?",
+                (file_hash,),
+            )
+            if await cursor.fetchone():
+                files_skipped += 1
+                logger.info(f"File already imported (hash match): {file_path}")
+                continue
+
             # Extract metadata
             if metadata.is_supported_image(mime_type):
                 extracted = metadata.extract_image_metadata(file_bytes)
@@ -218,6 +258,7 @@ async def _scan_local_source(
                 mime_type=mime_type,
                 auto_tag=auto_tag,
                 extracted_metadata=extracted,
+                file_hash=file_hash,
             )
 
             files_imported += 1
@@ -395,6 +436,19 @@ async def _scan_ssh_source(
                     file_bytes = Path(tmp_path).read_bytes()
                     Path(tmp_path).unlink()
 
+                    # Calculate file hash for deduplication
+                    file_hash = _calculate_file_hash(file_bytes)
+
+                    # Check if already imported by hash
+                    cursor = await db.execute(
+                        "SELECT id FROM media WHERE file_hash = ?",
+                        (file_hash,),
+                    )
+                    if await cursor.fetchone():
+                        files_skipped += 1
+                        logger.info(f"File already imported (hash match): {remote_path}")
+                        continue
+
                     # Extract metadata
                     if metadata.is_supported_image(mime_type):
                         extracted = metadata.extract_image_metadata(file_bytes)
@@ -411,6 +465,7 @@ async def _scan_ssh_source(
                         mime_type=mime_type,
                         auto_tag=auto_tag,
                         extracted_metadata=extracted,
+                        file_hash=file_hash,
                     )
 
                     files_imported += 1
@@ -460,6 +515,7 @@ async def _import_media_file(
     mime_type: str,
     auto_tag: bool,
     extracted_metadata: dict[str, Any],
+    file_hash: str | None = None,
 ) -> str:
     """Import a media file: upload to Dropbox, catalog, generate thumbnail, suggest tags.
 
@@ -472,6 +528,7 @@ async def _import_media_file(
         mime_type: MIME type.
         auto_tag: Generate tag suggestions.
         extracted_metadata: Extracted metadata.
+        file_hash: SHA256 hash for deduplication.
 
     Returns:
         Media ID.
@@ -488,6 +545,9 @@ async def _import_media_file(
     media_type = metadata.get_media_type(mime_type)
 
     # Create catalog entry
+    if not file_hash:
+        file_hash = _calculate_file_hash(file_bytes)
+
     await catalog_service.create_media(
         db=db,
         title=title,
@@ -500,6 +560,7 @@ async def _import_media_file(
         source_id=source_id,
         source_path=source_path,
         tags=[],
+        file_hash=file_hash,
     )
 
     # Generate thumbnail

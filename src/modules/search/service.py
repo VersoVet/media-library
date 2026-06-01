@@ -9,6 +9,74 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 
+async def list_all_media(
+    db: aiosqlite.Connection,
+    media_type: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """List all media with optional filtering.
+
+    Args:
+        db: Database connection.
+        media_type: Filter by 'image' or 'video' (optional).
+        limit: Max results.
+        offset: Result offset.
+
+    Returns:
+        Tuple of (media list, total count).
+    """
+    # Build WHERE clause
+    where_sql = ""
+    params: list[Any] = []
+
+    if media_type:
+        where_sql = "WHERE media_type = ?"
+        params.append(media_type)
+
+    # Count total
+    count_sql = f"SELECT COUNT(*) as cnt FROM media {where_sql}"
+    count_cursor = await db.execute(count_sql, params)
+    count_row = await count_cursor.fetchone()
+    total = dict(count_row)["cnt"] if count_row else 0
+
+    # Fetch results
+    results_sql = f"""
+        SELECT *
+        FROM media
+        {where_sql}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """
+    results_params = params + [limit, offset]
+
+    cursor = await db.execute(results_sql, results_params)
+    rows = await cursor.fetchall()
+
+    # Convert to dicts and fetch tags
+    results = []
+    for row in rows:
+        media = dict(row)
+        media["metadata"] = json.loads(media.get("metadata_json", "{}"))
+        del media["metadata_json"]
+
+        # Fetch tags
+        tags_cursor = await db.execute(
+            """
+            SELECT t.name FROM tags t
+            JOIN media_tags mt ON t.id = mt.tag_id
+            WHERE mt.media_id = ?
+            """,
+            (media["id"],),
+        )
+        tags_rows = await tags_cursor.fetchall()
+        media["tags"] = [dict(r)["name"] for r in tags_rows]
+        results.append(media)
+
+    logger.info(f"Listed {len(results)} media items (total: {total})")
+    return results, total
+
+
 async def search(
     db: aiosqlite.Connection,
     query: str,

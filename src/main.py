@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from onyx_sdk import OnyxClient, SkillStatus
+from onyx_sdk import OnyxClient
 
 from src.database import get_db_context, init_db
 from src.models import HealthResponse, InfoResponse

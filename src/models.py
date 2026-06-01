@@ -36,6 +36,7 @@ class MediaItem(BaseModel):
     source_id: int | None = None
     source_path: str | None = None
     file_size: int
+    file_hash: str | None = None  # SHA256 checksum for deduplication
     metadata: MediaMetadata = Field(default_factory=MediaMetadata)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime

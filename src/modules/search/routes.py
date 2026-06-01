@@ -23,7 +23,7 @@ async def search(
     offset: int = Query(0, ge=0),
     db: Connection = Depends(get_db),
 ) -> SearchResult:
-    """Search media by FTS5.
+    """Search media by FTS5 or list all media if query is empty.
 
     Args:
         q: Search query.
@@ -35,15 +35,16 @@ async def search(
     Returns:
         Search results with total count.
     """
-    if not q:
-        raise HTTPException(status_code=400, detail="Query string required")
-
     try:
         from datetime import datetime
 
         from src.models import MediaItem, MediaMetadata
 
-        results, total = await service.search(db, q, media_type, limit, offset)
+        # If empty query, list all media instead of FTS search
+        if not q:
+            results, total = await service.list_all_media(db, media_type, limit, offset)
+        else:
+            results, total = await service.search(db, q, media_type, limit, offset)
 
         media_items = []
         for row in results:

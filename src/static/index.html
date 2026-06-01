@@ -294,13 +294,23 @@
         <!-- Library Tab -->
         <div id="library" class="tab-content active">
             <h2>Media Library</h2>
-            <div style="margin: 20px 0;">
-                <input type="text" id="searchQuery" placeholder="Search media..." onchange="searchMedia()">
-                <select id="mediaTypeFilter" onchange="searchMedia()" style="margin-top: 10px;">
-                    <option value="">All types</option>
-                    <option value="image">Images</option>
-                    <option value="video">Videos</option>
-                </select>
+            <div style="margin: 20px 0; display: grid; gap: 10px;">
+                <div>
+                    <input type="text" id="searchQuery" placeholder="Search media by title or description..." onchange="searchMedia()" style="width: 100%; padding: 8px;">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <select id="mediaTypeFilter" onchange="searchMedia()">
+                        <option value="">All types</option>
+                        <option value="image">Images</option>
+                        <option value="video">Videos</option>
+                    </select>
+                    <select id="tagFilter" onchange="searchMedia()">
+                        <option value="">All tags</option>
+                    </select>
+                </div>
+            </div>
+            <div style="margin-bottom: 15px; padding: 10px; background: #f9f9f9; border-radius: 4px;">
+                <strong>Tags:</strong> <span id="tagCloud" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;"></span>
             </div>
             <div id="libraryContent" class="media-grid"></div>
         </div>
@@ -440,18 +450,36 @@
             content.innerHTML = '<div class="loading">Loading media...</div>';
 
             try {
-                const response = await fetch(`${API_URL}/search?q=&limit=50`);
+                // Load all tags
+                await loadTags();
+
+                const response = await fetch(`${API_URL}/search?q=&limit=100`);
                 const data = await response.json();
 
                 content.innerHTML = '';
+                if (data.items.length === 0) {
+                    content.innerHTML = '<p>No media found. Add sources and run scans to import media.</p>';
+                    return;
+                }
+
                 data.items.forEach(media => {
                     const item = document.createElement('div');
                     item.className = 'media-item';
+                    const thumbUrl = `/api/media/${media.id}/thumbnail`;
+                    const tagsHtml = media.tags && media.tags.length > 0
+                        ? `<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;">
+                             ${media.tags.map(tag => `<span style="background: #e0e0e0; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${tag}</span>`).join('')}
+                           </div>`
+                        : '';
+
                     item.innerHTML = `
-                        <div class="media-thumb">${media.media_type}</div>
+                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white;">
+                            <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none';" alt="${media.title}">
+                        </div>
                         <div class="media-info">
-                            <div class="media-title">${media.title}</div>
-                            <span class="media-type">${media.media_type}</span>
+                            <div class="media-title" title="${media.title}">${media.title}</div>
+                            <span class="media-type" style="background: ${media.media_type === 'image' ? '#4CAF50' : '#2196F3'}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${media.media_type}</span>
+                            ${tagsHtml}
                         </div>
                     `;
                     content.appendChild(item);
@@ -461,28 +489,83 @@
             }
         }
 
+        async function loadTags() {
+            try {
+                const response = await fetch(`${API_URL}/tags`);
+                const tags = await response.json();
+
+                const tagFilter = document.getElementById('tagFilter');
+                const cloudDiv = document.getElementById('tagCloud');
+
+                tagFilter.innerHTML = '<option value="">All tags</option>';
+                cloudDiv.innerHTML = '';
+
+                tags.forEach(tag => {
+                    const option = document.createElement('option');
+                    option.value = tag.name;
+                    option.textContent = `${tag.name} (${tag.count})`;
+                    tagFilter.appendChild(option);
+
+                    const badge = document.createElement('button');
+                    badge.style.cssText = 'padding: 6px 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 16px; cursor: pointer; font-size: 12px; transition: all 0.2s;';
+                    badge.textContent = `${tag.name} (${tag.count})`;
+                    badge.onclick = () => {
+                        document.getElementById('tagFilter').value = tag.name;
+                        searchMedia();
+                    };
+                    badge.onmouseover = () => badge.style.background = '#64b5f6';
+                    badge.onmouseout = () => badge.style.background = '#e3f2fd';
+                    cloudDiv.appendChild(badge);
+                });
+            } catch (error) {
+                console.error('Failed to load tags:', error);
+            }
+        }
+
         async function searchMedia() {
             const q = document.getElementById('searchQuery').value;
             const type = document.getElementById('mediaTypeFilter').value;
+            const tag = document.getElementById('tagFilter').value;
             const content = document.getElementById('libraryContent');
             content.innerHTML = '<div class="loading">Searching...</div>';
 
             try {
-                const params = new URLSearchParams({ q, limit: 50 });
-                if (type) params.append('media_type', type);
+                let url = `${API_URL}/search?q=${encodeURIComponent(q)}&limit=100`;
+                if (type) url += `&media_type=${type}`;
 
-                const response = await fetch(`${API_URL}/search?${params}`);
+                const response = await fetch(url);
                 const data = await response.json();
 
+                // Client-side tag filtering
+                let items = data.items;
+                if (tag) {
+                    items = items.filter(media => media.tags && media.tags.includes(tag));
+                }
+
                 content.innerHTML = '';
-                data.items.forEach(media => {
+                if (items.length === 0) {
+                    content.innerHTML = '<p style="grid-column: 1/-1;">No media found matching your filters.</p>';
+                    return;
+                }
+
+                items.forEach(media => {
                     const item = document.createElement('div');
                     item.className = 'media-item';
+                    const thumbUrl = `/api/media/${media.id}/thumbnail`;
+                    const tagsHtml = media.tags && media.tags.length > 0
+                        ? `<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;">
+                             ${media.tags.map(tag => `<span style="background: #e0e0e0; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${tag}</span>`).join('')}
+                           </div>`
+                        : '';
+
                     item.innerHTML = `
-                        <div class="media-thumb">${media.media_type}</div>
+                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white;">
+                            <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none';" alt="${media.title}">
+                        </div>
                         <div class="media-info">
-                            <div class="media-title">${media.title}</div>
-                            <span class="media-type">${media.media_type}</span>
+                            <div class="media-title" title="${media.title}">${media.title}</div>
+                            <span class="media-type" style="background: ${media.media_type === 'image' ? '#4CAF50' : '#2196F3'}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${media.media_type}</span>
+                            ${tagsHtml}
                         </div>
                     `;
                     content.appendChild(item);
@@ -612,7 +695,59 @@
         async function loadLogs() {
             const content = document.getElementById('logsContent');
             content.innerHTML = '<div class="loading">Loading logs...</div>';
-            content.innerHTML = '<p>Scan logs will appear here after running scans.</p>';
+
+            try {
+                const sourcesResp = await fetch(`${API_URL}/sources`);
+                const sources = await sourcesResp.json();
+
+                content.innerHTML = '';
+                let hasLogs = false;
+
+                for (const source of sources) {
+                    try {
+                        const logsResp = await fetch(`${API_URL}/sources/${source.id}/logs`);
+                        if (!logsResp.ok) continue;
+
+                        const logs = await logsResp.json();
+                        if (!logs || logs.length === 0) continue;
+
+                        hasLogs = true;
+
+                        const sourceSection = document.createElement('div');
+                        sourceSection.style.cssText = 'margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 4px; border-left: 4px solid #6366f1;';
+                        sourceSection.innerHTML = `<h3 style="margin-top: 0;">${source.name}</h3>`;
+
+                        logs.forEach(log => {
+                            const logItem = document.createElement('div');
+                            logItem.style.cssText = 'padding: 10px; background: white; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ddd;';
+                            const status = log.finished_at ? '✓ Completed' : '⏳ Running';
+                            const errorCount = (log.errors && log.errors.length) || 0;
+                            const errorHtml = errorCount > 0 ? `<div style="color: #c33; margin-top: 5px; font-size: 12px;">⚠ ${errorCount} error(s)</div>` : '';
+
+                            logItem.innerHTML = `
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; font-size: 13px;">
+                                    <div><strong>Started:</strong> ${new Date(log.started_at).toLocaleString()}</div>
+                                    <div><strong>Status:</strong> ${status}</div>
+                                    <div><strong>Imported:</strong> ${log.files_imported}/${log.files_found}</div>
+                                    <div><strong>Skipped:</strong> ${log.files_skipped}</div>
+                                </div>
+                                ${errorHtml}
+                            `;
+                            sourceSection.appendChild(logItem);
+                        });
+
+                        content.appendChild(sourceSection);
+                    } catch (error) {
+                        console.error(`Failed to load logs for source ${source.id}:`, error);
+                    }
+                }
+
+                if (!hasLogs) {
+                    content.innerHTML = '<p style="color: #999;">No scan logs yet. Run scans to see history here.</p>';
+                }
+            } catch (error) {
+                content.innerHTML = `<div class="error">Failed to load logs: ${error.message}</div>`;
+            }
         }
 
         // Load initial content
