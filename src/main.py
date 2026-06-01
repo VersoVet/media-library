@@ -2,9 +2,11 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from onyx_sdk import OnyxClient
 
 from src.database import get_db_context, init_db
@@ -141,6 +143,11 @@ app.include_router(thumbnail_routes.router)
 app.include_router(search_routes.router)
 app.include_router(sources_routes.router)
 app.include_router(scanner_routes.router)
+
+# Mount static files (dashboard)
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 # Health check endpoint
