@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Library</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            color: #6366f1;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .tab-btn.active {
+            color: #6366f1;
+            border-bottom-color: #6366f1;
+        }
+
+        .tab-btn:hover {
+            color: #6366f1;
+        }
+
+        .tab-content {
+            display: none;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .media-item {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: transform 0.2s;
+        }
+
+        .media-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .media-thumb {
+            width: 100%;
+            height: 200px;
+            background: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .media-info {
+            padding: 10px;
+            font-size: 12px;
+        }
+
+        .media-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .media-type {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-size: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #4f46e5;
+        }
+
+        button.secondary {
+            background: #e5e7eb;
+            color: #333;
+        }
+
+        button.secondary:hover {
+            background: #d1d5db;
+        }
+
+        .source-item {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .source-details {
+            flex: 1;
+        }
+
+        .source-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .source-type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+
+        .source-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+        }
+
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .success {
+            background: #efe;
+            border: 1px solid #cfc;
+            color: #3c3;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .modal-content h2 {
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📷 Media Library</h1>
+            <p>Image and video library with intelligent organization</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('library')">Library</button>
+            <button class="tab-btn" onclick="switchTab('config')">Configuration</button>
+            <button class="tab-btn" onclick="switchTab('logs')">Scan Logs</button>
+        </div>
+
+        <!-- Library Tab -->
+        <div id="library" class="tab-content active">
+            <h2>Media Library</h2>
+            <div style="margin: 20px 0;">
+                <input type="text" id="searchQuery" placeholder="Search media..." onchange="searchMedia()">
+                <select id="mediaTypeFilter" onchange="searchMedia()" style="margin-top: 10px;">
+                    <option value="">All types</option>
+                    <option value="image">Images</option>
+                    <option value="video">Videos</option>
+                </select>
+            </div>
+            <div id="libraryContent" class="media-grid"></div>
+        </div>
+
+        <!-- Configuration Tab -->
+        <div id="config" class="tab-content">
+            <h2>Scan Sources</h2>
+            <button onclick="openSourceModal()">+ Add Source</button>
+
+            <div style="margin-top: 20px;">
+                <div id="sourcesContent" class="loading">Loading sources...</div>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div id="logs" class="tab-content">
+            <h2>Scan Logs</h2>
+            <button onclick="runScanner()">Run All Scans</button>
+
+            <div style="margin-top: 20px;">
+                <div id="logsContent" class="loading">Loading logs...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for adding/editing source -->
+    <div id="sourceModal" class="modal">
+        <div class="modal-content">
+            <h2 id="modalTitle">Add Source</h2>
+            <form onsubmit="saveSource(event)">
+                <div class="form-group">
+                    <label>Name:</label>
+                    <input type="text" id="sourceName" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Type:</label>
+                    <select id="sourceType" onchange="updateSourceFields()" required>
+                        <option value="">Select type...</option>
+                        <option value="dropbox">Dropbox</option>
+                        <option value="local">Local</option>
+                        <option value="ssh">SSH</option>
+                    </select>
+                </div>
+
+                <!-- Dropbox fields -->
+                <div id="dropboxFields" style="display:none;">
+                    <div class="form-group">
+                        <label>Dropbox Path:</label>
+                        <input type="text" id="dropboxPath" placeholder="/Photos/">
+                    </div>
+                </div>
+
+                <!-- Local fields -->
+                <div id="localFields" style="display:none;">
+                    <div class="form-group">
+                        <label>Local Path:</label>
+                        <input type="text" id="localPath" placeholder="/home/user/photos/">
+                    </div>
+                </div>
+
+                <!-- SSH fields -->
+                <div id="sshFields" style="display:none;">
+                    <div class="form-group">
+                        <label>Host:</label>
+                        <input type="text" id="sshHost" placeholder="10.0.0.X">
+                    </div>
+                    <div class="form-group">
+                        <label>Port:</label>
+                        <input type="number" id="sshPort" value="22">
+                    </div>
+                    <div class="form-group">
+                        <label>User:</label>
+                        <input type="text" id="sshUser" placeholder="onyx">
+                    </div>
+                    <div class="form-group">
+                        <label>Key (Vault name):</label>
+                        <input type="text" id="sshKey" placeholder="ssh_key_axon">
+                    </div>
+                    <div class="form-group">
+                        <label>Path:</label>
+                        <input type="text" id="sshPath" placeholder="/data/photos/">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="sourceRecursive" checked>
+                        Scan subfolders
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="sourceAutoTag" checked>
+                        Auto-tag imported media
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>Cron Schedule:</label>
+                    <input type="text" id="sourceCron" value="0 */6 * * *" placeholder="0 */6 * * *">
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="secondary" onclick="closeSourceModal()">Cancel</button>
+                    <button type="submit">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/api';
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            // Load tab content
+            if (tabName === 'library') {
+                loadLibrary();
+            } else if (tabName === 'config') {
+                loadSources();
+            } else if (tabName === 'logs') {
+                loadLogs();
+            }
+        }
+
+        async function loadLibrary() {
+            const content = document.getElementById('libraryContent');
+            content.innerHTML = '<div class="loading">Loading media...</div>';
+
+            try {
+                const response = await fetch(`${API_URL}/search?q=&limit=50`);
+                const data = await response.json();
+
+                content.innerHTML = '';
+                data.items.forEach(media => {
+                    const item = document.createElement('div');
+                    item.className = 'media-item';
+                    item.innerHTML = `
+                        <div class="media-thumb">${media.media_type}</div>
+                        <div class="media-info">
+                            <div class="media-title">${media.title}</div>
+                            <span class="media-type">${media.media_type}</span>
+                        </div>
+                    `;
+                    content.appendChild(item);
+                });
+            } catch (error) {
+                content.innerHTML = `<div class="error">Failed to load media: ${error.message}</div>`;
+            }
+        }
+
+        async function searchMedia() {
+            const q = document.getElementById('searchQuery').value;
+            const type = document.getElementById('mediaTypeFilter').value;
+            const content = document.getElementById('libraryContent');
+            content.innerHTML = '<div class="loading">Searching...</div>';
+
+            try {
+                const params = new URLSearchParams({ q, limit: 50 });
+                if (type) params.append('media_type', type);
+
+                const response = await fetch(`${API_URL}/search?${params}`);
+                const data = await response.json();
+
+                content.innerHTML = '';
+                data.items.forEach(media => {
+                    const item = document.createElement('div');
+                    item.className = 'media-item';
+                    item.innerHTML = `
+                        <div class="media-thumb">${media.media_type}</div>
+                        <div class="media-info">
+                            <div class="media-title">${media.title}</div>
+                            <span class="media-type">${media.media_type}</span>
+                        </div>
+                    `;
+                    content.appendChild(item);
+                });
+            } catch (error) {
+                content.innerHTML = `<div class="error">Search failed: ${error.message}</div>`;
+            }
+        }
+
+        async function loadSources() {
+            const content = document.getElementById('sourcesContent');
+            content.innerHTML = '<div class="loading">Loading sources...</div>';
+
+            try {
+                const response = await fetch(`${API_URL}/sources`);
+                const sources = await response.json();
+
+                content.innerHTML = '';
+                sources.forEach(source => {
+                    const item = document.createElement('div');
+                    item.className = 'source-item';
+                    item.innerHTML = `
+                        <div class="source-details">
+                            <div class="source-name">${source.name}</div>
+                            <span class="source-type">${source.source_type}</span>
+                            Status: ${source.last_scan_status || 'never'}
+                        </div>
+                        <div class="source-actions">
+                            <button class="secondary" onclick="runSourceScan(${source.id})">Scan</button>
+                            <button class="secondary" onclick="deleteSource(${source.id})">Delete</button>
+                        </div>
+                    `;
+                    content.appendChild(item);
+                });
+            } catch (error) {
+                content.innerHTML = `<div class="error">Failed to load sources: ${error.message}</div>`;
+            }
+        }
+
+        async function runSourceScan(sourceId) {
+            try {
+                const response = await fetch(`${API_URL}/scanner/run/${sourceId}`, { method: 'POST' });
+                const report = await response.json();
+                alert(`Scan complete: ${report.files_imported} files imported`);
+                loadSources();
+            } catch (error) {
+                alert(`Scan failed: ${error.message}`);
+            }
+        }
+
+        async function runScanner() {
+            try {
+                const response = await fetch(`${API_URL}/scanner/run`, { method: 'POST' });
+                const reports = await response.json();
+                alert(`Scans complete: ${reports.length} sources processed`);
+                loadLogs();
+            } catch (error) {
+                alert(`Scanner failed: ${error.message}`);
+            }
+        }
+
+        async function deleteSource(sourceId) {
+            if (!confirm('Delete this source?')) return;
+
+            try {
+                await fetch(`${API_URL}/sources/${sourceId}`, { method: 'DELETE' });
+                loadSources();
+            } catch (error) {
+                alert(`Delete failed: ${error.message}`);
+            }
+        }
+
+        function openSourceModal() {
+            document.getElementById('sourceModal').classList.add('active');
+        }
+
+        function closeSourceModal() {
+            document.getElementById('sourceModal').classList.remove('active');
+        }
+
+        function updateSourceFields() {
+            const type = document.getElementById('sourceType').value;
+            document.getElementById('dropboxFields').style.display = type === 'dropbox' ? 'block' : 'none';
+            document.getElementById('localFields').style.display = type === 'local' ? 'block' : 'none';
+            document.getElementById('sshFields').style.display = type === 'ssh' ? 'block' : 'none';
+        }
+
+        async function saveSource(event) {
+            event.preventDefault();
+            const type = document.getElementById('sourceType').value;
+            const config = {};
+
+            if (type === 'dropbox') {
+                config.path = document.getElementById('dropboxPath').value || '/';
+            } else if (type === 'local') {
+                config.path = document.getElementById('localPath').value;
+            } else if (type === 'ssh') {
+                config.host = document.getElementById('sshHost').value;
+                config.port = parseInt(document.getElementById('sshPort').value);
+                config.user = document.getElementById('sshUser').value;
+                config.key = document.getElementById('sshKey').value;
+                config.path = document.getElementById('sshPath').value;
+            }
+
+            const source = {
+                name: document.getElementById('sourceName').value,
+                source_type: type,
+                config: config,
+                recursive: document.getElementById('sourceRecursive').checked,
+                auto_tag: document.getElementById('sourceAutoTag').checked,
+                cron_schedule: document.getElementById('sourceCron').value,
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/sources`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(source),
+                });
+                closeSourceModal();
+                loadSources();
+            } catch (error) {
+                alert(`Save failed: ${error.message}`);
+            }
+        }
+
+        async function loadLogs() {
+            const content = document.getElementById('logsContent');
+            content.innerHTML = '<div class="loading">Loading logs...</div>';
+            content.innerHTML = '<p>Scan logs will appear here after running scans.</p>';
+        }
+
+        // Load initial content
+        loadLibrary();
+    </script>
+</body>
+</html>

@@ -2,10 +2,12 @@
   "name": "media-library",
   "version": "1.0.0",
   "core": {
+    "name": "media-library",
     "display_name": "Media Library",
-    "description": "Bibliothèque de médias (images, vidéos) classés par mots-clés pour illustrer des présentations",
+    "type": "python",
+    "description": "Biblioth\u00e8que de m\u00e9dias (images, vid\u00e9os) class\u00e9s par mots-cl\u00e9s pour illustrer des pr\u00e9sentations",
     "status": "dev",
-    "brain_area": "temporal",
+    "brain_area": "bibliotheca",
     "routing": {
       "host": "0.0.0.0",
       "port": 8202,
@@ -14,38 +16,41 @@
   },
   "heart": {
     "deployment": {
-      "target_host": "",
+      "target_host": "10.0.0.21",
+      "target_name": "onyxaxon",
       "platform": "linux"
     },
     "lifecycle": {
       "run_mode": "service",
       "start_command": "python -m src.main"
+    },
+    "systemd": {
+      "service_name": "onyx-media-library",
+      "working_dir": "/opt/onyx/skills/media-library",
+      "exec_start": "/opt/onyx/venv/bin/python -m src.main"
     }
   },
   "forge": {
     "type": "python",
+    "repository": "VersoVet/media-library",
     "development": {
       "dev_platform": "OnyxDendrite",
       "test_platform": "OnyxDendrite",
       "dev_status": "draft",
       "progress_percent": 10
-    },
-    "repository": "VersoVet/media-library"
+    }
   },
   "dashboard": {
     "enabled": true,
     "page": "/",
-    "icon": "link",
+    "icon": "image",
     "category": "skill",
-    "color": "#00d4aa"
+    "color": "#6366f1"
   },
   "integration": {
     "redis": {
       "publish_status": true,
       "channel": "onyx:skill:status"
-    },
-    "sdk": {
-      "min_version": "2.1.0"
     }
   }
 }
