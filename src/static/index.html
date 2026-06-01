@@ -466,13 +466,32 @@
                 // Load all tags
                 await loadTags();
 
-                const response = await fetch(`${API_URL}/search?q=&limit=100`);
+                // Reset pagination state
+                paginationState = {
+                    offset: 0,
+                    limit: 50,
+                    isLoading: false,
+                    hasMore: true,
+                    searchQuery: '',
+                    mediaType: '',
+                    tag: ''
+                };
+
+                const response = await fetch(`${API_URL}/search?q=&limit=${paginationState.limit}&offset=0`);
                 const data = await response.json();
 
                 content.innerHTML = '';
                 if (data.items.length === 0) {
                     content.innerHTML = '<p>Aucun média trouvé. Ajoutez des sources et lancez les scans pour importer des médias.</p>';
+                    paginationState.hasMore = false;
                     return;
+                }
+
+                // Check if there are more items
+                if (data.items.length < paginationState.limit) {
+                    paginationState.hasMore = false;
+                } else {
+                    paginationState.hasMore = true;
                 }
 
                 data.items.forEach(media => {
@@ -503,6 +522,8 @@
                     `;
                     content.appendChild(item);
                 });
+
+                paginationState.offset = data.items.length;
             } catch (error) {
                 content.innerHTML = `<div class="error">Failed to load media: ${error.message}</div>`;
             }
@@ -549,7 +570,18 @@
             content.innerHTML = '<div class="loading">Recherche en cours...</div>';
 
             try {
-                let url = `${API_URL}/search?q=${encodeURIComponent(q)}&limit=100`;
+                // Reset pagination state for new search
+                paginationState = {
+                    offset: 0,
+                    limit: 50,
+                    isLoading: false,
+                    hasMore: true,
+                    searchQuery: q,
+                    mediaType: type,
+                    tag: tag
+                };
+
+                let url = `${API_URL}/search?q=${encodeURIComponent(q)}&limit=${paginationState.limit}&offset=0`;
                 if (type) url += `&media_type=${type}`;
 
                 const response = await fetch(url);
@@ -564,7 +596,15 @@
                 content.innerHTML = '';
                 if (items.length === 0) {
                     content.innerHTML = '<p style="grid-column: 1/-1;">Aucun média ne correspond à vos filtres.</p>';
+                    paginationState.hasMore = false;
                     return;
+                }
+
+                // Check if there are more items
+                if (items.length < paginationState.limit) {
+                    paginationState.hasMore = false;
+                } else {
+                    paginationState.hasMore = true;
                 }
 
                 items.forEach(media => {
@@ -595,6 +635,8 @@
                     `;
                     content.appendChild(item);
                 });
+
+                paginationState.offset = items.length;
             } catch (error) {
                 content.innerHTML = `<div class="error">Search failed: ${error.message}</div>`;
             }
@@ -891,7 +933,98 @@
             }
         }
 
+        // Pagination state
+        let paginationState = {
+            offset: 0,
+            limit: 50,
+            isLoading: false,
+            hasMore: true,
+            searchQuery: '',
+            mediaType: '',
+            tag: ''
+        };
+
+        // Scroll listener for infinite scroll
+        function setupInfiniteScroll() {
+            window.addEventListener('scroll', () => {
+                if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 500) {
+                    if (!paginationState.isLoading && paginationState.hasMore && document.getElementById('library').classList.contains('active')) {
+                        loadMoreMedia();
+                    }
+                }
+            });
+        }
+
+        async function loadMoreMedia() {
+            if (paginationState.isLoading) return;
+            paginationState.isLoading = true;
+
+            const content = document.getElementById('libraryContent');
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'loading';
+            loadingDiv.style.gridColumn = '1 / -1';
+            loadingDiv.textContent = 'Chargement...';
+            content.appendChild(loadingDiv);
+
+            try {
+                let url = `${API_URL}/search?q=${encodeURIComponent(paginationState.searchQuery)}&limit=${paginationState.limit}&offset=${paginationState.offset}`;
+                if (paginationState.mediaType) url += `&media_type=${paginationState.mediaType}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Client-side tag filtering
+                let items = data.items;
+                if (paginationState.tag) {
+                    items = items.filter(media => media.tags && media.tags.includes(paginationState.tag));
+                }
+
+                if (items.length < paginationState.limit) {
+                    paginationState.hasMore = false;
+                }
+
+                content.removeChild(loadingDiv);
+
+                items.forEach(media => {
+                    const item = document.createElement('div');
+                    item.className = 'media-item';
+                    item.style.cursor = 'pointer';
+                    item.onclick = () => openMediaModal(media);
+
+                    const thumbUrl = `/api/media/${media.id}/thumbnail`;
+                    const tagsHtml = media.tags && media.tags.length > 0
+                        ? `<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;">
+                             ${media.tags.map(tag => `<span style="background: #e0e0e0; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${tag}</span>`).join('')}
+                           </div>`
+                        : '';
+
+                    item.innerHTML = `
+                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; position: relative;">
+                            <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none';" alt="${media.title}">
+                            <div style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+                                ${media.media_type === 'image' ? '🖼️' : '🎬'}
+                            </div>
+                        </div>
+                        <div class="media-info">
+                            <div class="media-title" title="${media.title}">${media.title}</div>
+                            <span class="media-type" style="background: ${media.media_type === 'image' ? '#4CAF50' : '#2196F3'}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${media.media_type}</span>
+                            ${tagsHtml}
+                        </div>
+                    `;
+                    content.appendChild(item);
+                });
+
+                paginationState.offset += items.length;
+            } catch (error) {
+                content.removeChild(loadingDiv);
+                console.error('Failed to load more media:', error);
+            } finally {
+                paginationState.isLoading = false;
+            }
+        }
+
         // Load initial content
+        setupInfiniteScroll();
         loadLibrary();
     </script>
 </body>
