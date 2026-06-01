@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from onyx_sdk import onyx
+from onyx_sdk import OnyxClient, SkillStatus
 
 from src.database import get_db_context, init_db
 from src.models import HealthResponse, InfoResponse
@@ -23,16 +23,26 @@ logger = logging.getLogger(__name__)
 # APScheduler for cron jobs
 scheduler = None
 
+# OnyxClient for skill status visibility
+onyx_client = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context for startup and shutdown."""
-    global scheduler
+    global scheduler, onyx_client
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    # Startup
-    await onyx.start()
-    logger.info("Skill started")
+    # Initialize OnyxClient
+    try:
+        logger.info("Initializing OnyxClient...")
+        onyx_client = OnyxClient()
+        logger.info("Calling OnyxClient.start()...")
+        result = onyx_client.start()
+        logger.info(f"OnyxClient started (result={result})")
+    except Exception as e:
+        logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
+        onyx_client = None
 
     logger.info("Initializing database...")
     await init_db()
@@ -74,8 +84,12 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
         logger.info("APScheduler shutdown")
 
-    await onyx.stop()
-    logger.info("Skill stopped")
+    if onyx_client:
+        try:
+            onyx_client.stop()
+            logger.info("OnyxClient stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop OnyxClient: {e}")
 
 
 async def _scan_source_scheduled(source_id: int) -> None:
