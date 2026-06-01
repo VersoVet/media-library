@@ -1,6 +1,9 @@
 """Thumbnail serving routes."""
 
 import logging
+import tempfile
+from pathlib import Path
+from typing import Any
 
 from aiosqlite import Connection
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +11,7 @@ from fastapi.responses import FileResponse
 
 from src.database import get_db
 from src.modules.catalog import service as catalog_service
+from src.modules.dropbox import service as dropbox_service
 
 from . import service
 
@@ -69,4 +73,88 @@ async def get_thumbnail(
         raise
     except Exception as e:
         logger.error(f"Thumbnail generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/regenerate-video-thumbnails")
+async def regenerate_video_thumbnails(
+    db: Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Regenerate GIF thumbnails for all video media.
+
+    Downloads each video from Dropbox and generates a lightweight GIF.
+
+    Args:
+        db: Database connection.
+
+    Returns:
+        Report with success/failure counts.
+
+    Raises:
+        HTTPException: If database operation fails.
+    """
+    try:
+        # Get all videos
+        cursor = await db.execute(
+            "SELECT id, dropbox_path FROM media WHERE media_type = 'video'",
+        )
+        videos = await cursor.fetchall()
+
+        success_count = 0
+        failure_count = 0
+        errors: list[str] = []
+
+        for video in videos:
+            video_id = dict(video)["id"]
+            dropbox_path = dict(video)["dropbox_path"]
+
+            try:
+                logger.info(f"Regenerating GIF for video {video_id}")
+
+                # Download video
+                video_bytes = await dropbox_service.download_file(dropbox_path)
+
+                # Save to temp file
+                with tempfile.NamedTemporaryFile(
+                    suffix=".mp4", delete=False
+                ) as tmp:
+                    tmp.write(video_bytes)
+                    tmp_path = tmp.name
+
+                try:
+                    # Generate GIF
+                    result = await service.generate_video_thumbnail(
+                        tmp_path, video_id
+                    )
+                    if result:
+                        success_count += 1
+                        logger.info(f"Successfully regenerated GIF for {video_id}")
+                    else:
+                        failure_count += 1
+                        errors.append(f"{video_id}: GIF generation returned None")
+                finally:
+                    # Clean up temp file
+                    Path(tmp_path).unlink(missing_ok=True)
+
+            except Exception as e:
+                failure_count += 1
+                error_msg = f"{video_id}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(f"Failed to regenerate GIF for {video_id}: {e}")
+
+        logger.info(
+            f"GIF regeneration complete: {success_count} succeeded, "
+            f"{failure_count} failed"
+        )
+
+        return {
+            "status": "completed",
+            "total": len(videos),
+            "success": success_count,
+            "failed": failure_count,
+            "errors": errors,
+        }
+
+    except Exception as e:
+        logger.error(f"GIF regeneration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
