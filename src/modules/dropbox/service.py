@@ -107,16 +107,20 @@ async def download_file(dropbox_path: str) -> bytes:
     Raises:
         Exception: If download fails.
     """
+    import json
+
     token = await get_dropbox_token()
 
     # Try Dropbox API first (recommended)
     try:
         async with httpx.AsyncClient() as client:
+            # Use json.dumps() to properly encode paths with non-ASCII characters
+            dropbox_arg = json.dumps({"path": dropbox_path})
             response = await client.post(
                 "https://content.dropboxapi.com/2/files/download",
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "Dropbox-API-Arg": f'{{"path": "{dropbox_path}"}}',
+                    "Dropbox-API-Arg": dropbox_arg,
                 },
                 timeout=60.0,
             )
@@ -141,14 +145,18 @@ async def upload_file(file_bytes: bytes, dest_path: str) -> dict[str, Any]:
     Raises:
         Exception: If upload fails.
     """
+    import json
+
     token = await get_dropbox_token()
 
     async with httpx.AsyncClient() as client:
+        # Use json.dumps() to properly encode paths with non-ASCII characters
+        dropbox_arg = json.dumps({"path": dest_path, "mode": "add"})
         response = await client.post(
             "https://content.dropboxapi.com/2/files/upload",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Dropbox-API-Arg": f'{{"path": "{dest_path}", "mode": "add"}}',
+                "Dropbox-API-Arg": dropbox_arg,
                 "Content-Type": "application/octet-stream",
             },
             content=file_bytes,
