@@ -59,16 +59,26 @@ async def lifespan(app: FastAPI):
         for source in sources:
             if source.get("enabled", False):
                 cron_schedule = source.get("cron_schedule", "0 */6 * * *")
-                # Add job for this source
-                scheduler.add_job(
-                    _scan_source_scheduled,
-                    "cron",
-                    cron_schedule=cron_schedule,
-                    args=[source["id"]],
-                    id=f"scan_source_{source['id']}",
-                    replace_existing=True,
-                )
-                logger.info(f"Scheduled cron scan for source {source['id']}: {cron_schedule}")
+                # Parse cron expression: minute hour day month day_of_week
+                cron_parts = cron_schedule.split()
+                if len(cron_parts) == 5:
+                    minute, hour, day, month, day_of_week = cron_parts
+                    # Add job for this source
+                    scheduler.add_job(
+                        _scan_source_scheduled,
+                        "cron",
+                        minute=minute,
+                        hour=hour,
+                        day=day,
+                        month=month,
+                        day_of_week=day_of_week,
+                        args=[source["id"]],
+                        id=f"scan_source_{source['id']}",
+                        replace_existing=True,
+                    )
+                    logger.info(f"Scheduled cron scan for source {source['id']}: {cron_schedule}")
+                else:
+                    logger.warning(f"Invalid cron schedule for source {source['id']}: {cron_schedule}")
 
         await db.close()
     except Exception as e:

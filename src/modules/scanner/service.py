@@ -36,7 +36,11 @@ async def scan_source(
     """
     source_id = source["id"]
     source_type = source["source_type"]
-    config = json.loads(source.get("config_json", "{}"))
+    # Handle both parsed (config) and unparsed (config_json) formats
+    if "config" in source and isinstance(source["config"], dict):
+        config = source["config"]
+    else:
+        config = json.loads(source.get("config_json", "{}"))
 
     await sources_service.update_scan_status(db, source_id, "running")
 
@@ -238,35 +242,67 @@ async def _scan_ssh_source(
     source_row: dict[str, Any],
 ) -> SyncReport:
     """Scan SSH source."""
+    import os
+
     host = config.get("host")
     port = config.get("port", 22)
     user = config.get("user")
-    key_name = config.get("key")
     path = config.get("path", "/")
 
-    if not all([host, user, key_name]):
-        raise ValueError("SSH config missing host, user, or key")
+    if not all([host, user]):
+        raise ValueError("SSH config missing host or user")
 
-    # Get SSH key from Vault
-    import os
+    # Get authentication method: key or password
+    key_name = config.get("key")
+    password_key = config.get("password_key")
 
-    token = os.getenv("ONYX_VAULT_TOKEN", "")
-    if not token:
-        raise ValueError("ONYX_VAULT_TOKEN not set")
+    # Prepare credentials
+    client_keys = None
+    password = None
 
-    import httpx
+    if key_name:
+        # Get SSH key from Vault
+        token = os.getenv("ONYX_VAULT_TOKEN", "")
+        if not token:
+            raise ValueError("ONYX_VAULT_TOKEN not set")
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"http://10.0.0.44:8050/vault/{key_name}",
-            headers={"X-Vault-Token": token},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        private_key = response.json().get("value", "")
+        import httpx
 
-    if not private_key:
-        raise ValueError(f"SSH key not found in Vault: {key_name}")
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://10.0.0.44:8050/vault/{key_name}",
+                headers={"X-Vault-Token": token},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            private_key = response.json().get("value", "")
+
+        if not private_key:
+            raise ValueError(f"SSH key not found in Vault: {key_name}")
+
+        client_keys = [asyncssh.import_private_key(private_key)]
+
+    elif password_key:
+        # Get SSH password from Vault
+        token = os.getenv("ONYX_VAULT_TOKEN", "")
+        if not token:
+            raise ValueError("ONYX_VAULT_TOKEN not set")
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://10.0.0.44:8050/vault/{password_key}",
+                headers={"X-Vault-Token": token},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            password = response.json().get("value", "")
+
+        if not password:
+            raise ValueError(f"SSH password not found in Vault: {password_key}")
+    else:
+        raise ValueError("SSH config must have either 'key' or 'password_key'")
 
     files_found = 0
     files_imported = 0
@@ -278,12 +314,20 @@ async def _scan_ssh_source(
             host,
             port=port,
             username=user,
-            client_keys=[asyncssh.import_private_key(private_key)],
+            client_keys=client_keys,
+            password=password,
             known_hosts=None,
         ) as conn:
             # List files remotely
-            async with conn.open_sftp_client() as sftp:
-                for entry in await sftp.listdir_attr(path):
+            async with await conn.start_sftp_client() as sftp:
+                try:
+                    entries = await sftp.listdir(path)
+                except FileNotFoundError:
+                    logger.warning(f"SSH path not found: {path}")
+                    entries = []
+
+                for entry in entries:
+                    # asyncssh returns SFTPName objects
                     if not entry.is_file():
                         continue
 
