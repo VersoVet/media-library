@@ -677,10 +677,10 @@
             const thumbUrl = `/api/media/${media.id}/thumbnail`;
 
             const tagsHtml = media.tags && media.tags.length > 0
-                ? `<div style="display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0;">
+                ? `<div style="display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0;" id="tagsDisplay">
                      ${media.tags.map(tag => `<span style="background: #6366f1; color: white; padding: 6px 12px; border-radius: 16px; font-size: 13px;">${tag}</span>`).join('')}
                    </div>`
-                : '<p style="color: #999;">Aucun tag</p>';
+                : '<p style="color: #999;" id="tagsDisplay">Aucun tag</p>';
 
             const metadataHtml = `
                 <div style="margin: 15px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 13px;">
@@ -702,8 +702,18 @@
                 <h3 style="margin-top: 0;">${media.title}</h3>
 
                 <div style="margin: 10px 0;">
-                    <strong>Étiquettes:</strong>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong>Étiquettes:</strong>
+                        <button onclick="toggleEditTags('${media.id}')" style="padding: 4px 8px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;">✏️ Éditer</button>
+                    </div>
                     ${tagsHtml}
+                    <div id="tagEditForm" style="display: none; margin-top: 10px;">
+                        <input type="text" id="tagInput" placeholder="Ajouter des tags (séparés par des virgules)" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px;">
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="saveTagsForMedia('${media.id}')" style="flex: 1; padding: 8px; background: #6366f1; color: white; border: none; border-radius: 4px; cursor: pointer;">Sauvegarder</button>
+                            <button onclick="toggleEditTags('${media.id}')" style="flex: 1; padding: 8px; background: #e5e7eb; border: none; border-radius: 4px; cursor: pointer;">Annuler</button>
+                        </div>
+                    </div>
                 </div>
 
                 ${metadataHtml}
@@ -718,7 +728,58 @@
                 </div>
             `;
 
+            // Store media data for editing
+            window.currentMedia = media;
+
             modal.classList.add('active');
+        }
+
+        function toggleEditTags(mediaId) {
+            const form = document.getElementById('tagEditForm');
+            const input = document.getElementById('tagInput');
+
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+                // Populate input with current tags
+                if (window.currentMedia && window.currentMedia.tags) {
+                    input.value = window.currentMedia.tags.join(', ');
+                }
+                input.focus();
+            } else {
+                form.style.display = 'none';
+            }
+        }
+
+        async function saveTagsForMedia(mediaId) {
+            const input = document.getElementById('tagInput');
+            const tagString = input.value;
+            const tags = tagString.split(',').map(t => t.trim()).filter(t => t.length > 0);
+
+            try {
+                const response = await fetch(`${API_URL}/media/${mediaId}/tags`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(tags),
+                });
+
+                if (!response.ok) throw new Error('Failed to save tags');
+
+                // Update the display
+                window.currentMedia.tags = tags;
+                const display = document.getElementById('tagsDisplay');
+                if (tags.length > 0) {
+                    display.innerHTML = tags.map(tag =>
+                        `<span style="background: #6366f1; color: white; padding: 6px 12px; border-radius: 16px; font-size: 13px;">${tag}</span>`
+                    ).join('');
+                } else {
+                    display.innerHTML = '<p style="color: #999;">Aucun tag</p>';
+                }
+
+                // Hide form
+                document.getElementById('tagEditForm').style.display = 'none';
+            } catch (error) {
+                alert(`Erreur: ${error.message}`);
+            }
         }
 
         function closeMediaModal(event) {

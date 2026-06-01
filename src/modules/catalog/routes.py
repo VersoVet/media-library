@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from aiosqlite import Connection
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 
 from src.database import get_db
@@ -186,7 +186,7 @@ async def delete_media(
 @router.put("/media/{media_id}/tags")
 async def update_media_tags(
     media_id: str,
-    tags: list[str],
+    tags: list[str] = Body(...),
     db: Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Update tags for a media.

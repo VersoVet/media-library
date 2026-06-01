@@ -21,16 +21,18 @@ async def ensure_thumbnail_dir() -> None:
     THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_thumbnail_path(media_id: str) -> Path:
+def get_thumbnail_path(media_id: str, is_video: bool = False) -> Path:
     """Get path to thumbnail file.
 
     Args:
         media_id: Media ID.
+        is_video: If True, returns .gif path; otherwise .webp.
 
     Returns:
-        Path to thumbnail webp file.
+        Path to thumbnail file.
     """
-    return THUMBNAIL_DIR / f"{media_id}.{THUMBNAIL_FORMAT}"
+    ext = "gif" if is_video else THUMBNAIL_FORMAT
+    return THUMBNAIL_DIR / f"{media_id}.{ext}"
 
 
 async def generate_image_thumbnail(img_bytes: bytes, media_id: str) -> Path:
@@ -67,62 +69,86 @@ async def generate_image_thumbnail(img_bytes: bytes, media_id: str) -> Path:
 
 
 async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | None:
-    """Generate thumbnail for video.
+    """Generate lightweight GIF thumbnail for video.
 
-    Extracts a frame at 1 second using ffmpeg, then resizes.
+    Extracts frames from 0.5-1.5 seconds and creates a short looping GIF.
 
     Args:
         dropbox_path: Path to video in Dropbox (must be downloaded first).
         media_id: Media ID (for filename).
 
     Returns:
-        Path to generated thumbnail, or None if generation fails.
+        Path to generated GIF thumbnail, or None if generation fails.
 
     Note:
         This function expects the video file to be available locally.
         Use with a temporary file path.
     """
     await ensure_thumbnail_dir()
-    thumb_path = get_thumbnail_path(media_id)
+    # Change extension to .gif instead of .webp
+    thumb_path = THUMBNAIL_DIR / f"{media_id}.gif"
 
     try:
-        # Extract frame at 1 second
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp_frame = tmp.name
-
-        try:
+        # Extract 5 frames over 1 second (0.5-1.5 seconds) for animation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Extract frames
             result = subprocess.run(
                 [
                     "ffmpeg",
                     "-i",
                     dropbox_path,
                     "-ss",
+                    "0.5",
+                    "-t",
                     "1",
                     "-vf",
-                    "scale=320:-1",
-                    "-vframes",
-                    "1",
-                    tmp_frame,
+                    "scale=320:-1,fps=5",
+                    os.path.join(tmpdir, "frame_%d.png"),
                 ],
                 capture_output=True,
                 timeout=30,
             )
+
             if result.returncode != 0:
-                logger.warning(f"ffmpeg failed: {result.stderr.decode()}")
+                logger.warning(f"ffmpeg extract failed: {result.stderr.decode()}")
                 return None
 
-            # Convert PNG to WebP
-            img = Image.open(tmp_frame)
-            img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            img.save(str(thumb_path), format="WEBP", quality=80)
+            # Load frames and create GIF
+            frames = []
+            for i in range(1, 6):  # 5 frames
+                frame_path = os.path.join(tmpdir, f"frame_{i}.png")
+                if os.path.exists(frame_path):
+                    try:
+                        img = Image.open(frame_path)
+                        img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                        # Convert RGBA to RGB for GIF compatibility
+                        if img.mode in ("RGBA", "LA", "P"):
+                            bg = Image.new("RGB", img.size, (240, 240, 240))
+                            if img.mode == "P":
+                                img = img.convert("RGBA")
+                            bg.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                            img = bg
+                        frames.append(img)
+                    except Exception as e:
+                        logger.debug(f"Could not load frame {i}: {e}")
 
-            logger.info(f"Generated video thumbnail {media_id}: {thumb_path}")
+            if not frames:
+                logger.warning(f"No frames extracted for {media_id}")
+                return None
+
+            # Save as animated GIF with heavy compression
+            frames[0].save(
+                str(thumb_path),
+                format="GIF",
+                save_all=True,
+                append_images=frames[1:],
+                duration=200,  # 200ms per frame
+                loop=0,  # Infinite loop
+                optimize=True,  # Compress
+            )
+
+            logger.info(f"Generated GIF thumbnail {media_id}: {thumb_path}")
             return thumb_path
-
-        finally:
-            # Clean up temp frame
-            if os.path.exists(tmp_frame):
-                os.unlink(tmp_frame)
 
     except FileNotFoundError:
         logger.warning("ffmpeg not found, skipping video thumbnail")
