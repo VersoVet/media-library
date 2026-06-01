@@ -1,11 +1,11 @@
 {
   "name": "media-library",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "core": {
     "name": "media-library",
     "display_name": "Media Library",
     "type": "python",
-    "description": "Biblioth\u00e8que de m\u00e9dias (images, vid\u00e9os) class\u00e9s par mots-cl\u00e9s pour illustrer des pr\u00e9sentations",
+    "description": "Bibliothèque de médias (images, vidéos) classés par mots-clés pour illustrer des présentations",
     "status": "dev",
     "brain_area": "bibliotheca",
     "routing": {
@@ -36,8 +36,8 @@
     "development": {
       "dev_platform": "dendrite",
       "test_platform": "dendrite",
-      "dev_status": "draft",
-      "progress_percent": 10
+      "dev_status": "deployed",
+      "progress_percent": 100
     }
   },
   "dashboard": {
