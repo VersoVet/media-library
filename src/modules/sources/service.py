@@ -2,8 +2,8 @@
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -63,7 +63,7 @@ async def create_source(
     return source_id
 
 
-async def get_source(db: aiosqlite.Connection, source_id: int) -> Optional[dict[str, Any]]:
+async def get_source(db: aiosqlite.Connection, source_id: int) -> dict[str, Any] | None:
     """Get source by ID.
 
     Args:
@@ -218,7 +218,7 @@ async def update_scan_status(
         source_id: Source ID.
         status: Status string ('ok', 'error', 'running').
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.execute(
         "UPDATE scan_sources SET last_scan_at = ?, last_scan_status = ? WHERE id = ?",

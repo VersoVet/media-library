@@ -1,7 +1,6 @@
 """Thumbnail serving routes."""
 
 import logging
-from pathlib import Path
 
 from aiosqlite import Connection
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +8,7 @@ from fastapi.responses import FileResponse
 
 from src.database import get_db
 from src.modules.catalog import service as catalog_service
+
 from . import service
 
 logger = logging.getLogger(__name__)

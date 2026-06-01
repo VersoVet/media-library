@@ -34,8 +34,8 @@
     "type": "python",
     "repository": "VersoVet/media-library",
     "development": {
-      "dev_platform": "OnyxDendrite",
-      "test_platform": "OnyxDendrite",
+      "dev_platform": "dendrite",
+      "test_platform": "dendrite",
       "dev_status": "draft",
       "progress_percent": 10
     }

@@ -1,7 +1,7 @@
 """Pydantic models for media-library skill."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -9,19 +9,19 @@ from pydantic import BaseModel, Field
 class Tag(BaseModel):
     """Tag model."""
 
-    id: Optional[int] = None
+    id: int | None = None
     name: str
 
 
 class MediaMetadata(BaseModel):
     """Media metadata (EXIF, ffprobe, etc.)."""
 
-    width: Optional[int] = None
-    height: Optional[int] = None
-    duration_seconds: Optional[float] = None
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
     exif: dict[str, Any] = Field(default_factory=dict)
-    codec: Optional[str] = None
-    fps: Optional[float] = None
+    codec: str | None = None
+    fps: float | None = None
 
 
 class MediaItem(BaseModel):
@@ -33,8 +33,8 @@ class MediaItem(BaseModel):
     media_type: str  # "image" or "video"
     mime_type: str
     dropbox_path: str
-    source_id: Optional[int] = None
-    source_path: Optional[str] = None
+    source_id: int | None = None
+    source_path: str | None = None
     file_size: int
     metadata: MediaMetadata = Field(default_factory=MediaMetadata)
     tags: list[str] = Field(default_factory=list)
@@ -65,7 +65,7 @@ class SearchQuery(BaseModel):
     """Search query parameters."""
 
     q: str = ""
-    media_type: Optional[str] = None
+    media_type: str | None = None
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
 
@@ -82,7 +82,7 @@ class TagSuggestion(BaseModel):
 
     media_id: str
     suggested_tags: list[str]
-    confidence: Optional[float] = None
+    confidence: float | None = None
 
 
 class ScanSourceConfig(BaseModel):
@@ -116,7 +116,7 @@ class SSHSourceConfig(ScanSourceConfig):
 class ScanSource(BaseModel):
     """Scan source (Dropbox/local/SSH)."""
 
-    id: Optional[int] = None
+    id: int | None = None
     name: str
     source_type: str  # "dropbox", "local", "ssh"
     config: dict[str, Any]  # serialized config
@@ -124,17 +124,17 @@ class ScanSource(BaseModel):
     recursive: bool = True
     auto_tag: bool = True
     cron_schedule: str = "0 */6 * * *"
-    last_scan_at: Optional[datetime] = None
-    last_scan_status: Optional[str] = None  # "ok", "error", "running"
+    last_scan_at: datetime | None = None
+    last_scan_status: str | None = None  # "ok", "error", "running"
 
 
 class ScanLog(BaseModel):
     """Scan log entry."""
 
-    id: Optional[int] = None
+    id: int | None = None
     source_id: int
     started_at: datetime
-    finished_at: Optional[datetime] = None
+    finished_at: datetime | None = None
     files_found: int = 0
     files_imported: int = 0
     files_skipped: int = 0
@@ -157,7 +157,7 @@ class HealthResponse(BaseModel):
 
     status: str
     db: str
-    dropbox: Optional[str] = None
+    dropbox: str | None = None
 
 
 class InfoResponse(BaseModel):

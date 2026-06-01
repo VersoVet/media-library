@@ -5,10 +5,11 @@ from datetime import datetime
 from typing import Any
 
 from aiosqlite import Connection
-from fastapi import APIRouter, File, Form, UploadFile, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from src.database import get_db
-from src.models import MediaItem, UploadResponse, MediaMetadata
+from src.models import MediaItem, MediaMetadata, UploadResponse
+
 from . import metadata, service
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ async def upload_media(
 
         # Prepare Dropbox path
         from src.modules.dropbox import service as dropbox_service
+
         media_id = await service.generate_media_id()
         ext = file.filename.split(".")[-1] if file.filename else media_type[0]
         dropbox_path = f"/media-library/{media_id}.{ext}"

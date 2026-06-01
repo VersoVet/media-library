@@ -4,10 +4,9 @@ import json
 import logging
 import subprocess
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any
 
 from PIL import Image
-from PIL.Image import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,12 @@ def extract_video_metadata(dropbox_path: str) -> dict[str, Any]:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "error",
-                "-show_format", "-show_streams",
-                "-of", "json",
+                "-v",
+                "error",
+                "-show_format",
+                "-show_streams",
+                "-of",
+                "json",
                 dropbox_path,
             ],
             capture_output=True,
@@ -144,8 +146,12 @@ def is_supported_image(mime_type: str) -> bool:
         True if supported.
     """
     supported = {
-        "image/jpeg", "image/png", "image/webp", "image/gif",
-        "image/svg+xml", "image/tiff",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "image/tiff",
     }
     return mime_type in supported
 
@@ -160,7 +166,11 @@ def is_supported_video(mime_type: str) -> bool:
         True if supported.
     """
     supported = {
-        "video/mp4", "video/webm", "video/mpeg", "video/quicktime",
-        "video/x-msvideo", "video/x-matroska",
+        "video/mp4",
+        "video/webm",
+        "video/mpeg",
+        "video/quicktime",
+        "video/x-msvideo",
+        "video/x-matroska",
     }
     return mime_type in supported

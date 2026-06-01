@@ -1,9 +1,10 @@
 """Database initialization and management."""
 
-import aiosqlite
 import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from datetime import datetime
+
+import aiosqlite
 
 DB_PATH = Path(os.getenv("MEDIA_LIBRARY_DB_PATH", "/opt/onyx/data/media-library/media.db"))
 
@@ -111,7 +112,7 @@ async def init_db() -> None:
         await db.commit()
 
 
-async def get_db() -> aiosqlite.Connection:
+async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
     """Get async database connection.
 
     Yields:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from src.database import get_db
 from src.models import SyncReport
+
 from . import service
 
 logger = logging.getLogger(__name__)

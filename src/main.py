@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from onyx_sdk import onyx
 
-from src.database import init_db, get_db_context
+from src.database import get_db_context, init_db
 from src.models import HealthResponse, InfoResponse
 from src.modules.catalog import routes as catalog_routes
 from src.modules.dropbox import service as dropbox_service
@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     # Startup
+    await onyx.start()
+    logger.info("Skill started")
+
     logger.info("Initializing database...")
     await init_db()
 
@@ -70,6 +73,9 @@ async def lifespan(app: FastAPI):
     if scheduler:
         scheduler.shutdown()
         logger.info("APScheduler shutdown")
+
+    await onyx.stop()
+    logger.info("Skill stopped")
 
 
 async def _scan_source_scheduled(source_id: int) -> None:

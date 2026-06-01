@@ -75,7 +75,7 @@ async def suggest_tags(img_bytes: bytes, metadata: dict[str, Any]) -> list[str]:
                                     "type": "text",
                                     "text": (
                                         "Analyze this image and suggest 8-12 descriptive tags in French. "
-                                        "Return ONLY a JSON array of strings, e.g., [\"tag1\", \"tag2\"]. "
+                                        'Return ONLY a JSON array of strings, e.g., ["tag1", "tag2"]. '
                                         "Focus on content, context, and technical aspects."
                                     ),
                                 },

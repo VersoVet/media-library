@@ -2,7 +2,9 @@
 __pycache__
 .env
 *.key
+*.pem
 secrets*
+credentials*
 .venv
 *.egg-info
 dist/

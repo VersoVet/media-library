@@ -1,24 +1,22 @@
 """Scanner service for multi-source orchestration."""
 
-import asyncio
 import json
 import logging
 import mimetypes
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aiosqlite
 import asyncssh
 
-from src.models import ScanSource, SyncReport
-from src.modules.dropbox import service as dropbox_service
-from src.modules.catalog import service as catalog_service
+from src.models import SyncReport
 from src.modules.catalog import metadata
+from src.modules.catalog import service as catalog_service
+from src.modules.dropbox import service as dropbox_service
+from src.modules.sources import service as sources_service
 from src.modules.tagger import service as tagger_service
 from src.modules.thumbnails import service as thumbnail_service
-from src.modules.sources import service as sources_service
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +125,7 @@ async def _scan_dropbox_source(
                 title=Path(file_name).stem,
                 mime_type=mime_type,
                 auto_tag=auto_tag,
-                metadata=extracted,
+                extracted_metadata=extracted,
             )
 
             files_imported += 1
@@ -214,7 +212,7 @@ async def _scan_local_source(
                 title=file_path.stem,
                 mime_type=mime_type,
                 auto_tag=auto_tag,
-                metadata=extracted,
+                extracted_metadata=extracted,
             )
 
             files_imported += 1
@@ -251,11 +249,13 @@ async def _scan_ssh_source(
 
     # Get SSH key from Vault
     import os
+
     token = os.getenv("ONYX_VAULT_TOKEN", "")
     if not token:
         raise ValueError("ONYX_VAULT_TOKEN not set")
 
     import httpx
+
     async with httpx.AsyncClient() as client:
         response = await client.get(
             f"http://10.0.0.44:8050/vault/{key_name}",
@@ -333,7 +333,7 @@ async def _scan_ssh_source(
                             title=Path(file_name).stem,
                             mime_type=mime_type,
                             auto_tag=False,  # SSH import doesn't auto-tag by default
-                            metadata=extracted,
+                            extracted_metadata=extracted,
                         )
 
                         files_imported += 1
@@ -364,7 +364,7 @@ async def _import_media_file(
     title: str,
     mime_type: str,
     auto_tag: bool,
-    metadata: dict[str, Any],
+    extracted_metadata: dict[str, Any],
 ) -> str:
     """Import a media file: upload to Dropbox, catalog, generate thumbnail, suggest tags.
 
@@ -376,7 +376,7 @@ async def _import_media_file(
         title: Media title.
         mime_type: MIME type.
         auto_tag: Generate tag suggestions.
-        metadata: Extracted metadata.
+        extracted_metadata: Extracted metadata.
 
     Returns:
         Media ID.
@@ -401,7 +401,7 @@ async def _import_media_file(
         mime_type=mime_type,
         dropbox_path=dropbox_path,
         file_size=len(file_bytes),
-        metadata=metadata,
+        metadata=extracted_metadata,
         source_id=source_id,
         source_path=source_path,
         tags=[],
@@ -417,7 +417,7 @@ async def _import_media_file(
     # Suggest tags if enabled
     if auto_tag and media_type == "image":
         try:
-            suggested = await tagger_service.suggest_tags(file_bytes, metadata)
+            suggested = await tagger_service.suggest_tags(file_bytes, extracted_metadata)
             if suggested:
                 await catalog_service.update_tags(db, media_id, suggested)
         except Exception as e:

@@ -6,7 +6,6 @@ import subprocess
 import tempfile
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
 
 from PIL import Image
 
@@ -67,7 +66,7 @@ async def generate_image_thumbnail(img_bytes: bytes, media_id: str) -> Path:
         raise
 
 
-async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Optional[Path]:
+async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | None:
     """Generate thumbnail for video.
 
     Extracts a frame at 1 second using ffmpeg, then resizes.
@@ -95,10 +94,14 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Optional
             result = subprocess.run(
                 [
                     "ffmpeg",
-                    "-i", dropbox_path,
-                    "-ss", "1",
-                    "-vf", "scale=320:-1",
-                    "-vframes", "1",
+                    "-i",
+                    dropbox_path,
+                    "-ss",
+                    "1",
+                    "-vf",
+                    "scale=320:-1",
+                    "-vframes",
+                    "1",
                     tmp_frame,
                 ],
                 capture_output=True,

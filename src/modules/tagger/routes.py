@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.database import get_db
 from src.models import TagSuggestion
 from src.modules.catalog import service as catalog_service
+
 from . import service
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ async def suggest_tags(
 
     # Get metadata for fallback
     import json
+
     metadata = json.loads(media.get("metadata_json", "{}"))
 
     # Suggest tags

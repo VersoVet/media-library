@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.database import get_db
 from src.models import SearchResult
+
 from . import service
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,9 @@ async def search(
         raise HTTPException(status_code=400, detail="Query string required")
 
     try:
-        from src.models import MediaItem, MediaMetadata
         from datetime import datetime
+
+        from src.models import MediaItem, MediaMetadata
 
         results, total = await service.search(db, q, media_type, limit, offset)
 
@@ -112,8 +114,9 @@ async def get_media_by_tag(
         Media items with the tag.
     """
     try:
-        from src.models import MediaItem, MediaMetadata
         from datetime import datetime
+
+        from src.models import MediaItem, MediaMetadata
 
         media_list, total = await service.get_media_by_tag(db, tag_name, limit, offset)
 

@@ -3,8 +3,8 @@
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
@@ -29,9 +29,9 @@ async def create_media(
     dropbox_path: str,
     file_size: int,
     metadata: dict[str, Any],
-    source_id: Optional[int] = None,
-    source_path: Optional[str] = None,
-    tags: Optional[list[str]] = None,
+    source_id: int | None = None,
+    source_path: str | None = None,
+    tags: list[str] | None = None,
 ) -> str:
     """Create new media entry in database.
 
@@ -55,7 +55,7 @@ async def create_media(
         Exception: If database operation fails.
     """
     media_id = await generate_media_id()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # Convert metadata dict to JSON
     metadata_json = json.dumps(metadata)
@@ -70,11 +70,21 @@ async def create_media(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            media_id, title, description, media_type, mime_type,
-            dropbox_path, source_id, source_path, file_size,
-            metadata.get("width"), metadata.get("height"),
-            metadata.get("duration_seconds"), metadata_json,
-            now, now,
+            media_id,
+            title,
+            description,
+            media_type,
+            mime_type,
+            dropbox_path,
+            source_id,
+            source_path,
+            file_size,
+            metadata.get("width"),
+            metadata.get("height"),
+            metadata.get("duration_seconds"),
+            metadata_json,
+            now,
+            now,
         ),
     )
 
@@ -88,7 +98,7 @@ async def create_media(
     return media_id
 
 
-async def get_media(db: aiosqlite.Connection, media_id: str) -> Optional[dict[str, Any]]:
+async def get_media(db: aiosqlite.Connection, media_id: str) -> dict[str, Any] | None:
     """Get media by ID with tags.
 
     Args:
@@ -241,7 +251,10 @@ async def add_tag_to_media(db: aiosqlite.Connection, media_id: str, tag_name: st
         await db.commit()
         cursor = await db.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
         tag_row = await cursor.fetchone()
-        tag_id = dict(tag_row)["id"]
+        if tag_row:
+            tag_id = dict(tag_row)["id"]
+        else:
+            raise ValueError(f"Failed to create tag: {tag_name}")
 
     # Add media-tag relationship
     try:

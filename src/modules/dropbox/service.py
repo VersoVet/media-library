@@ -47,9 +47,7 @@ async def get_dropbox_token() -> str:
     return await get_secret("dropbox_token")
 
 
-async def list_folder(
-    path: str, recursive: bool = False
-) -> list[dict[str, Any]]:
+async def list_folder(path: str, recursive: bool = False) -> list[dict[str, Any]]:
     """List files in Dropbox folder.
 
     Args:
