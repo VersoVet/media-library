@@ -45,8 +45,15 @@ async def lifespan(app: FastAPI):
         try:
             logger.info("Initializing OnyxClient...")
             onyx = OnyxClient()
-            onyx.start()
-            logger.info("OnyxClient started - UP status")
+            start_result = onyx.start()
+            logger.info(f"OnyxClient start() returned: {start_result}")
+            # Explicit status signal
+            try:
+                onyx.status("UP")
+                logger.info("OnyxClient status UP signaled")
+            except (AttributeError, TypeError):
+                logger.debug("OnyxClient.status() method not available")
+            logger.info("OnyxClient initialized with UP status")
         except Exception as e:
             logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
             onyx = None
@@ -105,8 +112,14 @@ async def lifespan(app: FastAPI):
 
     if onyx:
         try:
-            onyx.stop()
-            logger.info("OnyxClient stopped")
+            # Explicit DOWN status signal
+            try:
+                onyx.status("DOWN")
+                logger.info("OnyxClient status DOWN signaled")
+            except (AttributeError, TypeError):
+                logger.debug("OnyxClient.status() method not available")
+            stop_result = onyx.stop()
+            logger.info(f"OnyxClient stop() returned: {stop_result}")
         except Exception as e:
             logger.warning(f"Failed to stop OnyxClient: {e}")
 
@@ -123,9 +136,12 @@ async def _scan_source_scheduled(source_id: int) -> None:
             # Signal WORKING status
             if onyx:
                 try:
-                    onyx.set_status("WORKING", f"Scanning source {source_id}")
-                except Exception:
-                    pass
+                    onyx.status("WORKING")
+                except (AttributeError, TypeError):
+                    try:
+                        onyx.set_status("WORKING")
+                    except Exception:
+                        pass
             await scanner_service.scan_source(db, source)
         await db.close()
     except Exception as e:
