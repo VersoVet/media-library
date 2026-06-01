@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -89,10 +90,19 @@ async def import_media_file(
     try:
         if media_type == "image":
             await thumbnail_service.generate_image_thumbnail(file_bytes, media_id)
+        elif media_type == "video":
+            # For videos, save temporarily then generate thumbnail
+            with tempfile.NamedTemporaryFile(suffix=Path(source_path).suffix, delete=False) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+            try:
+                await thumbnail_service.generate_video_thumbnail(tmp_path, media_id)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
     except Exception as e:
         logger.warning(f"Thumbnail generation failed for {media_id}: {e}")
 
-    # Suggest tags if enabled
+    # Suggest tags if enabled (images only - vision API limitation)
     if auto_tag and media_type == "image":
         try:
             suggested = await tagger_service.suggest_tags(file_bytes, extracted_metadata)

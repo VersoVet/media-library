@@ -6,9 +6,11 @@ from typing import Any
 
 from aiosqlite import Connection
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
 
 from src.database import get_db
 from src.models import MediaItem, MediaMetadata, UploadResponse
+from src.modules.dropbox import service as dropbox_service
 
 from . import metadata, service
 
@@ -207,4 +209,38 @@ async def update_media_tags(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Update tags failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/media/{media_id}/download")
+async def download_media(
+    media_id: str,
+    db: Connection = Depends(get_db),
+) -> RedirectResponse:
+    """Get download link for media file from Dropbox.
+
+    Args:
+        media_id: Media ID.
+        db: Database connection.
+
+    Returns:
+        Redirect to Dropbox temporary download link.
+
+    Raises:
+        HTTPException: If media not found or download link unavailable.
+    """
+    try:
+        media = await service.get_media(db, media_id)
+        if not media:
+            raise HTTPException(status_code=404, detail="Media not found")
+
+        dropbox_path = media["dropbox_path"]
+        link = await dropbox_service.get_temp_link(dropbox_path)
+
+        return RedirectResponse(url=link, status_code=302)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download link generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

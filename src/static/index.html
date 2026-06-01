@@ -281,57 +281,70 @@
 <body>
     <div class="container">
         <header>
-            <h1>📷 Media Library</h1>
-            <p>Image and video library with intelligent organization</p>
+            <h1>📷 Bibliothèque Média</h1>
+            <p>Bibliothèque d'images et vidéos avec organisation intelligente</p>
         </header>
 
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('library')">Library</button>
+            <button class="tab-btn active" onclick="switchTab('library')">Bibliothèque</button>
             <button class="tab-btn" onclick="switchTab('config')">Configuration</button>
-            <button class="tab-btn" onclick="switchTab('logs')">Scan Logs</button>
+            <button class="tab-btn" onclick="switchTab('logs')">Historique</button>
         </div>
 
         <!-- Library Tab -->
         <div id="library" class="tab-content active">
-            <h2>Media Library</h2>
+            <h2>Bibliothèque Média</h2>
             <div style="margin: 20px 0; display: grid; gap: 10px;">
                 <div>
-                    <input type="text" id="searchQuery" placeholder="Search media by title or description..." onchange="searchMedia()" style="width: 100%; padding: 8px;">
+                    <input type="text" id="searchQuery" placeholder="Chercher par titre ou description..." onchange="searchMedia()" style="width: 100%; padding: 8px;">
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                     <select id="mediaTypeFilter" onchange="searchMedia()">
-                        <option value="">All types</option>
+                        <option value="">Tous les types</option>
                         <option value="image">Images</option>
-                        <option value="video">Videos</option>
+                        <option value="video">Vidéos</option>
                     </select>
                     <select id="tagFilter" onchange="searchMedia()">
-                        <option value="">All tags</option>
+                        <option value="">Tous les tags</option>
                     </select>
                 </div>
             </div>
             <div style="margin-bottom: 15px; padding: 10px; background: #f9f9f9; border-radius: 4px;">
-                <strong>Tags:</strong> <span id="tagCloud" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;"></span>
+                <strong>Étiquettes:</strong> <span id="tagCloud" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;"></span>
             </div>
             <div id="libraryContent" class="media-grid"></div>
         </div>
 
         <!-- Configuration Tab -->
         <div id="config" class="tab-content">
-            <h2>Scan Sources</h2>
-            <button onclick="openSourceModal()">+ Add Source</button>
+            <h2>Sources de Scan</h2>
+            <button onclick="openSourceModal()">+ Ajouter une source</button>
 
             <div style="margin-top: 20px;">
-                <div id="sourcesContent" class="loading">Loading sources...</div>
+                <div id="sourcesContent" class="loading">Chargement des sources...</div>
             </div>
         </div>
 
         <!-- Logs Tab -->
         <div id="logs" class="tab-content">
-            <h2>Scan Logs</h2>
-            <button onclick="runScanner()">Run All Scans</button>
+            <h2>Historique de Scan</h2>
+            <button onclick="runScanner()">Lancer tous les scans</button>
 
             <div style="margin-top: 20px;">
-                <div id="logsContent" class="loading">Loading logs...</div>
+                <div id="logsContent" class="loading">Chargement de l'historique...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for media preview -->
+    <div id="mediaModal" class="modal" onclick="closeMediaModal(event)">
+        <div class="modal-content" style="max-width: 600px;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 id="mediaModalTitle" style="margin: 0;">Media Preview</h2>
+                <button onclick="closeMediaModal()" class="secondary" style="padding: 5px 10px;">✕</button>
+            </div>
+            <div id="mediaModalContent">
+                <div class="loading">Loading...</div>
             </div>
         </div>
     </div>
@@ -447,7 +460,7 @@
 
         async function loadLibrary() {
             const content = document.getElementById('libraryContent');
-            content.innerHTML = '<div class="loading">Loading media...</div>';
+            content.innerHTML = '<div class="loading">Chargement des médias...</div>';
 
             try {
                 // Load all tags
@@ -458,13 +471,16 @@
 
                 content.innerHTML = '';
                 if (data.items.length === 0) {
-                    content.innerHTML = '<p>No media found. Add sources and run scans to import media.</p>';
+                    content.innerHTML = '<p>Aucun média trouvé. Ajoutez des sources et lancez les scans pour importer des médias.</p>';
                     return;
                 }
 
                 data.items.forEach(media => {
                     const item = document.createElement('div');
                     item.className = 'media-item';
+                    item.style.cursor = 'pointer';
+                    item.onclick = () => openMediaModal(media);
+
                     const thumbUrl = `/api/media/${media.id}/thumbnail`;
                     const tagsHtml = media.tags && media.tags.length > 0
                         ? `<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;">
@@ -473,8 +489,11 @@
                         : '';
 
                     item.innerHTML = `
-                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white;">
+                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; position: relative;">
                             <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none';" alt="${media.title}">
+                            <div style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+                                ${media.media_type === 'image' ? '🖼️' : '🎬'}
+                            </div>
                         </div>
                         <div class="media-info">
                             <div class="media-title" title="${media.title}">${media.title}</div>
@@ -527,7 +546,7 @@
             const type = document.getElementById('mediaTypeFilter').value;
             const tag = document.getElementById('tagFilter').value;
             const content = document.getElementById('libraryContent');
-            content.innerHTML = '<div class="loading">Searching...</div>';
+            content.innerHTML = '<div class="loading">Recherche en cours...</div>';
 
             try {
                 let url = `${API_URL}/search?q=${encodeURIComponent(q)}&limit=100`;
@@ -544,13 +563,16 @@
 
                 content.innerHTML = '';
                 if (items.length === 0) {
-                    content.innerHTML = '<p style="grid-column: 1/-1;">No media found matching your filters.</p>';
+                    content.innerHTML = '<p style="grid-column: 1/-1;">Aucun média ne correspond à vos filtres.</p>';
                     return;
                 }
 
                 items.forEach(media => {
                     const item = document.createElement('div');
                     item.className = 'media-item';
+                    item.style.cursor = 'pointer';
+                    item.onclick = () => openMediaModal(media);
+
                     const thumbUrl = `/api/media/${media.id}/thumbnail`;
                     const tagsHtml = media.tags && media.tags.length > 0
                         ? `<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;">
@@ -559,8 +581,11 @@
                         : '';
 
                     item.innerHTML = `
-                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white;">
+                        <div class="media-thumb" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; position: relative;">
                             <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" onerror="this.style.display='none';" alt="${media.title}">
+                            <div style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+                                ${media.media_type === 'image' ? '🖼️' : '🎬'}
+                            </div>
                         </div>
                         <div class="media-info">
                             <div class="media-title" title="${media.title}">${media.title}</div>
@@ -577,7 +602,7 @@
 
         async function loadSources() {
             const content = document.getElementById('sourcesContent');
-            content.innerHTML = '<div class="loading">Loading sources...</div>';
+            content.innerHTML = '<div class="loading">Chargement des sources...</div>';
 
             try {
                 const response = await fetch(`${API_URL}/sources`);
@@ -646,6 +671,61 @@
             document.getElementById('sourceModal').classList.remove('active');
         }
 
+        function openMediaModal(media) {
+            const modal = document.getElementById('mediaModal');
+            const content = document.getElementById('mediaModalContent');
+            const thumbUrl = `/api/media/${media.id}/thumbnail`;
+
+            const tagsHtml = media.tags && media.tags.length > 0
+                ? `<div style="display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0;">
+                     ${media.tags.map(tag => `<span style="background: #6366f1; color: white; padding: 6px 12px; border-radius: 16px; font-size: 13px;">${tag}</span>`).join('')}
+                   </div>`
+                : '<p style="color: #999;">Aucun tag</p>';
+
+            const metadataHtml = `
+                <div style="margin: 15px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 13px;">
+                    <p><strong>Type:</strong> ${media.media_type}</p>
+                    <p><strong>Format:</strong> ${media.mime_type}</p>
+                    <p><strong>Taille:</strong> ${(media.file_size / 1024 / 1024).toFixed(2)} MB</p>
+                    ${media.metadata.width ? `<p><strong>Dimensions:</strong> ${media.metadata.width} x ${media.metadata.height}</p>` : ''}
+                    ${media.metadata.duration_seconds ? `<p><strong>Durée:</strong> ${Math.round(media.metadata.duration_seconds)}s</p>` : ''}
+                </div>
+            `;
+
+            content.innerHTML = `
+                <div style="margin-bottom: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 400px;">
+                        <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="${media.title}" onerror="this.style.display='none';">
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 0;">${media.title}</h3>
+
+                <div style="margin: 10px 0;">
+                    <strong>Étiquettes:</strong>
+                    ${tagsHtml}
+                </div>
+
+                ${metadataHtml}
+
+                <div style="margin: 20px 0; display: flex; gap: 10px;">
+                    <a href="/api/media/${media.id}/download" target="_blank" download style="flex: 1; padding: 10px 15px; background: #6366f1; color: white; border: none; border-radius: 4px; cursor: pointer; text-align: center; text-decoration: none; font-weight: 500;">
+                        ⬇️ Télécharger
+                    </a>
+                    <button onclick="closeMediaModal()" style="flex: 1; padding: 10px 15px; background: #e5e7eb; color: #333; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;">
+                        Fermer
+                    </button>
+                </div>
+            `;
+
+            modal.classList.add('active');
+        }
+
+        function closeMediaModal(event) {
+            if (event && event.target !== document.getElementById('mediaModal')) return;
+            document.getElementById('mediaModal').classList.remove('active');
+        }
+
         function updateSourceFields() {
             const type = document.getElementById('sourceType').value;
             document.getElementById('dropboxFields').style.display = type === 'dropbox' ? 'block' : 'none';
@@ -694,7 +774,7 @@
 
         async function loadLogs() {
             const content = document.getElementById('logsContent');
-            content.innerHTML = '<div class="loading">Loading logs...</div>';
+            content.innerHTML = '<div class="loading">Chargement des logs...</div>';
 
             try {
                 const sourcesResp = await fetch(`${API_URL}/sources`);
