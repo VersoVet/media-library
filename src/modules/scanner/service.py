@@ -3,6 +3,7 @@
 import json
 import logging
 import mimetypes
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -340,17 +341,21 @@ async def _scan_ssh_source(
 
                 # Stat the file to determine if it's a file or directory
                 try:
-                    stat = await sftp.stat(entry_path)
+                    attrs = await sftp.stat(entry_path)
                 except FileNotFoundError:
                     logger.warning(f"Path not found: {entry_path}")
                     continue
+                except Exception as e:
+                    logger.warning(f"Failed to stat {entry_path}: {e}")
+                    continue
 
-                if stat.is_dir():
+                # Check if it's a directory using stat module
+                if stat.S_ISDIR(attrs.st_mode):
                     if recursive:
                         await walk_path(sftp, entry_path)
                     continue
 
-                if not stat.is_file():
+                if not stat.S_ISREG(attrs.st_mode):
                     continue
 
                 files_found += 1
