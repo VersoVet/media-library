@@ -58,14 +58,26 @@ async def get_thumbnail(
             await service.generate_image_thumbnail(img_bytes, media_id)
 
         elif media.get("media_type") == "video":
-            # For video, we'd need to download and extract frame
-            # For now, just try to generate (requires ffmpeg)
-            logger.warning(f"Video thumbnail generation not fully implemented for {media_id}")
-            raise HTTPException(status_code=501, detail="Video thumbnails not yet implemented")
+            # Download video and generate GIF thumbnail
+            video_bytes = await dropbox_service.download_file(media["dropbox_path"])
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(
+                suffix=".mp4", delete=False
+            ) as tmp:
+                tmp.write(video_bytes)
+                tmp_path = tmp.name
+            try:
+                await service.generate_video_thumbnail(tmp_path, media_id)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
 
         # Return generated thumbnail
         if thumb_path.exists():
-            return FileResponse(path=thumb_path, media_type="image/webp")
+            # Determine media type based on file extension
+            media_type = (
+                "image/gif" if media.get("media_type") == "video" else "image/webp"
+            )
+            return FileResponse(path=thumb_path, media_type=media_type)
         else:
             raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
 
