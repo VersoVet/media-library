@@ -316,8 +316,10 @@ async def _scan_ssh_source(
         """Recursively walk directory on SSH server."""
         nonlocal files_found, files_imported, files_skipped, errors
 
+        logger.info(f"Walking SSH path: {current_path}")
         try:
             entries = await sftp.listdir(current_path)
+            logger.info(f"Found {len(entries)} entries in {current_path}")
         except Exception as e:
             logger.warning(f"Failed to list {current_path}: {e}")
             return
@@ -325,10 +327,23 @@ async def _scan_ssh_source(
         for entry in entries:
             try:
                 file_name = entry.filename if hasattr(entry, 'filename') else str(entry)
-                entry_path = f"{current_path}/{file_name}".lstrip("/")
+
+                # Skip . and .. entries
+                if file_name in (".", ".."):
+                    continue
+
+                # Build the full path
+                if current_path.endswith("/"):
+                    entry_path = f"{current_path}{file_name}"
+                else:
+                    entry_path = f"{current_path}/{file_name}"
 
                 # Stat the file to determine if it's a file or directory
-                stat = await sftp.stat(entry_path)
+                try:
+                    stat = await sftp.stat(entry_path)
+                except FileNotFoundError:
+                    logger.warning(f"Path not found: {entry_path}")
+                    continue
 
                 if stat.is_dir():
                     if recursive:
@@ -340,6 +355,7 @@ async def _scan_ssh_source(
 
                 files_found += 1
                 remote_path = entry_path
+                logger.info(f"Processing file: {remote_path}")
 
                 try:
                     # Detect MIME type
@@ -395,6 +411,7 @@ async def _scan_ssh_source(
                 logger.error(f"Error processing entry {file_name}: {e}")
 
     try:
+        logger.info(f"Connecting to SSH {user}@{host}:{port}")
         async with asyncssh.connect(
             host,
             port=port,
@@ -403,8 +420,10 @@ async def _scan_ssh_source(
             password=password,
             known_hosts=None,
         ) as conn:
+            logger.info("SSH connection established")
             # List files remotely
             async with await conn.start_sftp_client() as sftp:
+                logger.info("SFTP client started")
                 await walk_path(sftp, path)
 
     except Exception as e:
