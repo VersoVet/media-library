@@ -3,6 +3,7 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,25 +31,25 @@ logger = logging.getLogger(__name__)
 scheduler = None
 
 # OnyxClient for skill status visibility
-onyx_client = None
+onyx = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context for startup and shutdown."""
-    global scheduler, onyx_client
+    global scheduler, onyx
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     # Initialize OnyxClient - signal UP status
     if OnyxClient:
         try:
             logger.info("Initializing OnyxClient...")
-            onyx_client = OnyxClient()
-            onyx_client.start()
+            onyx = OnyxClient()
+            onyx.start()
             logger.info("OnyxClient started - UP status")
         except Exception as e:
             logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
-            onyx_client = None
+            onyx = None
     else:
         logger.warning("OnyxClient not available")
 
@@ -102,9 +103,9 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
         logger.info("APScheduler shutdown")
 
-    if onyx_client:
+    if onyx:
         try:
-            onyx_client.stop()
+            onyx.stop()
             logger.info("OnyxClient stopped")
         except Exception as e:
             logger.warning(f"Failed to stop OnyxClient: {e}")
@@ -120,9 +121,9 @@ async def _scan_source_scheduled(source_id: int) -> None:
         if source:
             logger.info(f"Running scheduled scan for source {source_id}")
             # Signal WORKING status
-            if onyx_client:
+            if onyx:
                 try:
-                    onyx_client.set_status("WORKING", f"Scanning source {source_id}")
+                    onyx.set_status("WORKING", f"Scanning source {source_id}")
                 except Exception:
                     pass
             await scanner_service.scan_source(db, source)
@@ -233,31 +234,32 @@ async def info() -> InfoResponse:
 
 # Cron status endpoint
 @app.get("/cron")
-async def cron_status() -> dict[str, any]:
+async def cron_status() -> dict[str, Any]:
     """Get cron scheduler status.
 
     Returns:
-        Scheduler status with running jobs.
+        Scheduler status with running jobs and task definitions.
     """
     if not scheduler:
-        return {"status": "disabled"}
+        return {"status": "disabled", "tasks": []}
 
     try:
         jobs = scheduler.get_jobs()
+        tasks = [
+            {
+                "id": job.id,
+                "next_run_time": str(job.next_run_time) if job.next_run_time else None,
+            }
+            for job in jobs
+        ]
         return {
             "status": "running",
             "jobs_count": len(jobs),
-            "jobs": [
-                {
-                    "id": job.id,
-                    "next_run_time": str(job.next_run_time),
-                }
-                for job in jobs
-            ],
+            "tasks": tasks,
         }
     except Exception as e:
         logger.error(f"Failed to get cron status: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "tasks": []}
 
 
 # Root endpoint
