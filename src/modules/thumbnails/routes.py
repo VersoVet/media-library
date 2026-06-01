@@ -44,9 +44,11 @@ async def get_thumbnail(
         raise HTTPException(status_code=404, detail="Media not found")
 
     # Check if thumbnail exists
-    thumb_path = service.get_thumbnail_path(media_id)
+    is_video = media.get("media_type") == "video"
+    thumb_path = service.get_thumbnail_path(media_id, is_video=is_video)
     if thumb_path.exists():
-        return FileResponse(path=thumb_path, media_type="image/webp")
+        media_type = "image/gif" if is_video else "image/webp"
+        return FileResponse(path=thumb_path, media_type=media_type)
 
     # Generate thumbnail
     try:
@@ -73,10 +75,7 @@ async def get_thumbnail(
 
         # Return generated thumbnail
         if thumb_path.exists():
-            # Determine media type based on file extension
-            media_type = (
-                "image/gif" if media.get("media_type") == "video" else "image/webp"
-            )
+            media_type = "image/gif" if is_video else "image/webp"
             return FileResponse(path=thumb_path, media_type=media_type)
         else:
             raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
