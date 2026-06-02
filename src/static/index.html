@@ -281,8 +281,13 @@
 <body>
     <div class="container">
         <header>
-            <h1>📷 Bibliothèque Média</h1>
-            <p>Bibliothèque d'images et vidéos avec organisation intelligente</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>📷 Bibliothèque Média</h1>
+                    <p>Bibliothèque d'images et vidéos avec organisation intelligente</p>
+                </div>
+                <div id="statsBar" style="display: flex; gap: 20px; font-size: 14px; color: #666;"></div>
+            </div>
         </header>
 
         <div class="tabs">
@@ -296,7 +301,7 @@
             <h2>Bibliothèque Média</h2>
             <div style="margin: 20px 0; display: grid; gap: 10px;">
                 <div>
-                    <input type="text" id="searchQuery" placeholder="Chercher par titre ou description..." onchange="searchMedia()" style="width: 100%; padding: 8px;">
+                    <input type="text" id="searchQuery" placeholder="Chercher par titre ou description..." oninput="debounceSearch()" style="width: 100%; padding: 8px;">
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                     <select id="mediaTypeFilter" onchange="searchMedia()">
@@ -562,6 +567,12 @@
             }
         }
 
+        let searchTimer = null;
+        function debounceSearch() {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(searchMedia, 300);
+        }
+
         async function searchMedia() {
             const q = document.getElementById('searchQuery').value;
             const type = document.getElementById('mediaTypeFilter').value;
@@ -734,11 +745,22 @@
                 </div>
             `;
 
+            const isVideo = media.media_type === 'video';
+            const previewHtml = isVideo
+                ? `<div style="background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 400px; position: relative;">
+                       <img id="videoThumb" src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain; cursor: pointer;" alt="${media.title}" onerror="this.style.display='none';">
+                       <div id="playOverlay" onclick="loadVideo('${media.id}')" style="position: absolute; cursor: pointer; background: rgba(0,0,0,0.5); border-radius: 50%; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
+                           <span style="color: white; font-size: 28px; margin-left: 4px;">▶</span>
+                       </div>
+                       <video id="videoPlayer" controls style="max-width: 100%; max-height: 100%; display: none;"></video>
+                   </div>`
+                : `<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 400px;">
+                       <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="${media.title}" onerror="this.style.display='none';">
+                   </div>`;
+
             content.innerHTML = `
                 <div style="margin-bottom: 20px;">
-                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 400px;">
-                        <img src="${thumbUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="${media.title}" onerror="this.style.display='none';">
-                    </div>
+                    ${previewHtml}
                 </div>
 
                 <h3 style="margin-top: 0;">${media.title}</h3>
@@ -1023,8 +1045,46 @@
             }
         }
 
+        async function loadVideo(mediaId) {
+            const thumb = document.getElementById('videoThumb');
+            const overlay = document.getElementById('playOverlay');
+            const player = document.getElementById('videoPlayer');
+            if (!player) return;
+
+            overlay.innerHTML = '<span style="color: white; font-size: 14px;">Chargement...</span>';
+
+            try {
+                // Get Dropbox temp link via download endpoint (returns redirect URL)
+                const response = await fetch(`${API_URL}/media/${mediaId}/download`, { redirect: 'follow' });
+                player.src = response.url;
+                player.style.display = 'block';
+                if (thumb) thumb.style.display = 'none';
+                overlay.style.display = 'none';
+                player.play();
+            } catch (error) {
+                overlay.innerHTML = '<span style="color: #f44; font-size: 12px;">Erreur</span>';
+                console.error('Video load failed:', error);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/info');
+                const data = await response.json();
+                const bar = document.getElementById('statsBar');
+                bar.innerHTML = `
+                    <div style="text-align: center;"><strong style="font-size: 20px; color: #6366f1;">${data.total_media}</strong><br>Médias</div>
+                    <div style="text-align: center;"><strong style="font-size: 20px; color: #4CAF50;">${data.total_tags}</strong><br>Tags</div>
+                    <div style="text-align: center;"><strong style="font-size: 20px; color: #2196F3;">${data.total_sources}</strong><br>Sources</div>
+                `;
+            } catch (error) {
+                console.error('Stats load failed:', error);
+            }
+        }
+
         // Load initial content
         setupInfiniteScroll();
+        loadStats();
         loadLibrary();
     </script>
 </body>

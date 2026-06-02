@@ -1,6 +1,6 @@
 # media-library - Development Status
 
-**Last Updated**: 2026-06-01  
+**Last Updated**: 2026-06-02  
 **Status**: ✅ COMPLETE (Phases 1-11 done)
 
 ## Objective
@@ -77,14 +77,21 @@ Multi-source scanning (Dropbox, local, SSH) with automated tag suggestions via L
 
 ## Next Steps (Post-Launch)
 
-- [ ] Run `/forge-validate media-library` (18 phases)
+- [x] Run `/forge-validate media-library` (18 phases) - valid: true, 0 errors
 - [ ] Run `/forge-review media-library` (multi-LLM review)
 - [ ] Test with real Dropbox/SSH sources
 - [ ] Monitor scanner cron jobs
 - [ ] Add more LLM providers (Claude vision fallback)
-- [ ] Implement video serving (stream optimization)
+- [x] Video playback in dashboard modal (stream from Dropbox)
 - [ ] Add batch export functionality
 - [ ] Database cleanup policies (old media archival)
+
+### ✅ Phase 10 : Dashboard UX Improvements (2026-06-02)
+- Video player in media modal (click-to-play with Dropbox streaming)
+- Stats bar in header (media count, tags count, sources count)
+- Debounced real-time search (300ms delay)
+- Fixed mypy type errors (thumbnails service/routes)
+- Fixed ruff UP041 warning (TimeoutError alias)
 
 ## Configuration Files
 

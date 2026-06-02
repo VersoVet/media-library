@@ -4,7 +4,8 @@
 
 FastAPI service for media library management (images/videos) with intelligent keyword classification and multi-source scanning.
 
-**Status**: Complete (Phase 1-9 done)
+**Status**: Complete (Phase 1-9 done)  
+**Last Updated**: 2026-06-02
 
 ## Directory Structure
 
@@ -202,3 +203,4 @@ CREATE TABLE scan_logs (
 - FTS5 index updates on tag changes
 - Fallback tags for failed LLM vision
 - Async everywhere (aiosqlite, httpx, asyncio)
+- Ruff + mypy clean (zero warnings/errors)

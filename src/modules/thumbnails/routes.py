@@ -109,7 +109,7 @@ async def regenerate_video_thumbnails(
         cursor = await db.execute(
             "SELECT id, dropbox_path FROM media WHERE media_type = 'video'",
         )
-        videos = await cursor.fetchall()
+        videos = list(await cursor.fetchall())
 
         success_count = 0
         failure_count = 0
@@ -147,7 +147,7 @@ async def regenerate_video_thumbnails(
                         error_msg = f"{video_id}: Generation failed (None returned)"
                         errors.append(error_msg)
                         logger.warning(error_msg)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     failure_count += 1
                     error_msg = f"{video_id}: Timeout (>20s)"
                     errors.append(error_msg)

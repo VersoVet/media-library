@@ -140,19 +140,19 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                 frame_path = os.path.join(tmpdir, f"frame_{i}.png")
                 if os.path.exists(frame_path):
                     try:
-                        img = Image.open(frame_path)
-                        img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                        frame: Image.Image = Image.open(frame_path)
+                        frame.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
                         # Convert RGBA to RGB for GIF compatibility
-                        if img.mode in ("RGBA", "LA", "P"):
-                            bg = Image.new("RGB", img.size, (240, 240, 240))
-                            if img.mode == "P":
-                                img = img.convert("RGBA")
+                        if frame.mode in ("RGBA", "LA", "P"):
+                            bg = Image.new("RGB", frame.size, (240, 240, 240))
+                            if frame.mode == "P":
+                                frame = frame.convert("RGBA")
                             bg.paste(
-                                img,
-                                mask=(img.split()[-1] if img.mode == "RGBA" else None),
+                                frame,
+                                mask=(frame.split()[-1] if frame.mode == "RGBA" else None),
                             )
-                            img = bg
-                        frames.append(img)
+                            frame = bg
+                        frames.append(frame)
                     except Exception as e:
                         logger.debug(f"Could not load frame {i}: {e}")
 
