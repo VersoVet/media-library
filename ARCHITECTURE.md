@@ -5,7 +5,7 @@
 FastAPI service for media library management (images/videos) with intelligent keyword classification and multi-source scanning.
 
 **Status**: Complete (Phase 1-9 done)  
-**Last Updated**: 2026-06-02
+**Last Updated**: 2026-06-03
 
 ## Directory Structure
 

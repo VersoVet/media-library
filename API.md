@@ -1,6 +1,7 @@
 # media-library - API Reference
 
-**Base URL**: `http://{host}:8202`
+**Base URL**: `http://{host}:8202`  
+**Last Updated**: 2026-06-03
 
 ## Quick Links
 - Health: `/health`
