@@ -54,14 +54,16 @@ async def generate_image_thumbnail(img_bytes: bytes, media_id: str) -> Path:
     try:
         # Open image
         img = Image.open(BytesIO(img_bytes))
+        try:
+            # Resize maintaining aspect ratio
+            img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
 
-        # Resize maintaining aspect ratio
-        img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-
-        # Save as webp
-        img.save(str(thumb_path), format="WEBP", quality=80)
-        logger.info(f"Generated image thumbnail {media_id}: {thumb_path}")
-        return thumb_path
+            # Save as webp
+            img.save(str(thumb_path), format="WEBP", quality=80)
+            logger.info(f"Generated image thumbnail {media_id}: {thumb_path}")
+            return thumb_path
+        finally:
+            img.close()
 
     except Exception as e:
         logger.error(f"Failed to generate image thumbnail: {e}")
@@ -135,44 +137,49 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                 return None
 
             # Load frames and create GIF
-            frames = []
-            for i in range(1, 6):
-                frame_path = os.path.join(tmpdir, f"frame_{i}.png")
-                if os.path.exists(frame_path):
-                    try:
-                        frame: Image.Image = Image.open(frame_path)
-                        frame.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                        # Convert RGBA to RGB for GIF compatibility
-                        if frame.mode in ("RGBA", "LA", "P"):
-                            bg = Image.new("RGB", frame.size, (240, 240, 240))
-                            if frame.mode == "P":
-                                frame = frame.convert("RGBA")
-                            bg.paste(
-                                frame,
-                                mask=(frame.split()[-1] if frame.mode == "RGBA" else None),
-                            )
-                            frame = bg
-                        frames.append(frame)
-                    except Exception as e:
-                        logger.debug(f"Could not load frame {i}: {e}")
+            frames: list[Image.Image] = []
+            try:
+                for i in range(1, 6):
+                    frame_path = os.path.join(tmpdir, f"frame_{i}.png")
+                    if os.path.exists(frame_path):
+                        try:
+                            frame: Image.Image = Image.open(frame_path)
+                            frame.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                            # Convert RGBA to RGB for GIF compatibility
+                            if frame.mode in ("RGBA", "LA", "P"):
+                                bg = Image.new("RGB", frame.size, (240, 240, 240))
+                                if frame.mode == "P":
+                                    frame = frame.convert("RGBA")
+                                bg.paste(
+                                    frame,
+                                    mask=(frame.split()[-1] if frame.mode == "RGBA" else None),
+                                )
+                                frame.close()
+                                frame = bg
+                            frames.append(frame)
+                        except Exception as e:
+                            logger.debug(f"Could not load frame {i}: {e}")
 
-            if not frames:
-                logger.warning(f"No frames extracted for {media_id}")
-                return None
+                if not frames:
+                    logger.warning(f"No frames extracted for {media_id}")
+                    return None
 
-            # Save as animated GIF with heavy compression
-            frames[0].save(
-                str(thumb_path),
-                format="GIF",
-                save_all=True,
-                append_images=frames[1:],
-                duration=200,  # 200ms per frame
-                loop=0,  # Infinite loop
-                optimize=True,  # Compress
-            )
+                # Save as animated GIF with heavy compression
+                frames[0].save(
+                    str(thumb_path),
+                    format="GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=200,  # 200ms per frame
+                    loop=0,  # Infinite loop
+                    optimize=True,  # Compress
+                )
 
-            logger.info(f"Generated GIF thumbnail {media_id}: {thumb_path}")
-            return thumb_path
+                logger.info(f"Generated GIF thumbnail {media_id}: {thumb_path}")
+                return thumb_path
+            finally:
+                for f in frames:
+                    f.close()
 
     except FileNotFoundError:
         logger.warning("ffmpeg not found, skipping video thumbnail")

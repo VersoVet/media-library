@@ -1,17 +1,22 @@
 """LLM-based tag suggestion service using Groq vision."""
 
 import base64
+import io
 import json
 import logging
 import os
 from typing import Any
 
 import httpx
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+# Max image dimension for vision API (pixels) - keeps base64 under ~1 MB
+VISION_MAX_DIMENSION = 1024
 
 
 async def get_groq_api_key() -> str:
@@ -51,8 +56,8 @@ async def suggest_tags(img_bytes: bytes, metadata: dict[str, Any]) -> list[str]:
         # Get API key
         api_key = await get_groq_api_key()
 
-        # Base64 encode image
-        img_b64 = base64.b64encode(img_bytes).decode()
+        # Resize image to limit memory usage before base64 encoding
+        img_b64 = _resize_and_encode(img_bytes)
 
         # Call Groq API with vision
         async with httpx.AsyncClient() as client:
@@ -88,6 +93,9 @@ async def suggest_tags(img_bytes: bytes, metadata: dict[str, Any]) -> list[str]:
                 timeout=60.0,
             )
 
+            # Free base64 string immediately after sending request
+            del img_b64
+
             if response.status_code != 200:
                 logger.warning(f"Groq API error ({response.status_code}): {response.text}")
                 return await _fallback_tags(metadata)
@@ -118,6 +126,37 @@ async def suggest_tags(img_bytes: bytes, metadata: dict[str, Any]) -> list[str]:
         return await _fallback_tags(metadata)
 
     return await _fallback_tags(metadata)
+
+
+def _resize_and_encode(img_bytes: bytes) -> str:
+    """Resize image to bounded dimensions and return base64-encoded JPEG.
+
+    Prevents memory explosion when encoding large images for the vision API.
+    A 100 MB raw image becomes ~200 KB JPEG after resize.
+
+    Args:
+        img_bytes: Original image bytes.
+
+    Returns:
+        Base64-encoded JPEG string.
+    """
+    img: Image.Image = Image.open(io.BytesIO(img_bytes))
+    try:
+        # Resize if either dimension exceeds limit
+        if img.width > VISION_MAX_DIMENSION or img.height > VISION_MAX_DIMENSION:
+            img.thumbnail((VISION_MAX_DIMENSION, VISION_MAX_DIMENSION), Image.Resampling.LANCZOS)
+
+        # Convert to RGB (drop alpha) and encode as JPEG
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGB")
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        encoded = base64.b64encode(buf.getvalue()).decode()
+        buf.close()
+        return encoded
+    finally:
+        img.close()
 
 
 async def _fallback_tags(metadata: dict[str, Any]) -> list[str]:

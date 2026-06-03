@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI):
 
 async def _scan_source_scheduled(source_id: int) -> None:
     """Scan a source (scheduled task)."""
+    db = None
     try:
         db = await get_db_context()
         from src.modules.sources import service as sources_service
@@ -143,9 +144,11 @@ async def _scan_source_scheduled(source_id: int) -> None:
                     except Exception:
                         pass
             await scanner_service.scan_source(db, source)
-        await db.close()
     except Exception as e:
         logger.error(f"Scheduled scan failed for source {source_id}: {e}")
+    finally:
+        if db:
+            await db.close()
 
 
 # Create FastAPI app

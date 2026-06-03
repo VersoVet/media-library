@@ -1,5 +1,6 @@
 """Scanner utility functions for media import."""
 
+import gc
 import hashlib
 import logging
 import tempfile
@@ -15,6 +16,9 @@ from src.modules.tagger import service as tagger_service
 from src.modules.thumbnails import service as thumbnail_service
 
 logger = logging.getLogger(__name__)
+
+# Max file size to load entirely in memory (200 MB)
+MAX_FILE_BYTES = 200 * 1024 * 1024
 
 
 def calculate_file_hash(file_bytes: bytes) -> str:
@@ -56,6 +60,14 @@ async def import_media_file(
     Returns:
         Media ID.
     """
+    # Reject oversized files to prevent memory explosion
+    if len(file_bytes) > MAX_FILE_BYTES:
+        logger.warning(
+            f"Skipping oversized file {source_path} "
+            f"({len(file_bytes) / 1024 / 1024:.0f} MB > {MAX_FILE_BYTES / 1024 / 1024:.0f} MB limit)"
+        )
+        return ""
+
     # Generate media ID and Dropbox path
     media_id = await catalog_service.generate_media_id()
     ext = Path(source_path).suffix or ".bin"
@@ -66,6 +78,7 @@ async def import_media_file(
 
     # Determine media type
     media_type = metadata.get_media_type(mime_type)
+    file_size = len(file_bytes)
 
     # Create catalog entry
     if not file_hash:
@@ -78,7 +91,7 @@ async def import_media_file(
         media_type=media_type,
         mime_type=mime_type,
         dropbox_path=dropbox_path,
-        file_size=len(file_bytes),
+        file_size=file_size,
         metadata=extracted_metadata,
         source_id=source_id,
         source_path=source_path,
@@ -110,5 +123,9 @@ async def import_media_file(
                 await catalog_service.update_tags(db, media_id, suggested)
         except Exception as e:
             logger.warning(f"Tag suggestion failed for {media_id}: {e}")
+
+    # Explicit cleanup of large bytes buffer
+    del file_bytes
+    gc.collect()
 
     return media_id

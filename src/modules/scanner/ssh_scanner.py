@@ -1,5 +1,6 @@
 """SSH/SFTP remote source scanner."""
 
+import gc
 import logging
 import mimetypes
 import os
@@ -154,38 +155,44 @@ async def scan_ssh_source(
                     with tempfile.NamedTemporaryFile(delete=False) as tmp:
                         tmp_path = tmp.name
 
-                    await sftp.get(remote_path, tmp_path)
-                    file_bytes = Path(tmp_path).read_bytes()
-                    Path(tmp_path).unlink()
+                    try:
+                        await sftp.get(remote_path, tmp_path)
+                        file_bytes = Path(tmp_path).read_bytes()
+                    finally:
+                        Path(tmp_path).unlink(missing_ok=True)
 
-                    file_hash = utils.calculate_file_hash(file_bytes)
+                    try:
+                        file_hash = utils.calculate_file_hash(file_bytes)
 
-                    cursor = await db.execute(
-                        "SELECT id FROM media WHERE file_hash = ?",
-                        (file_hash,),
-                    )
-                    if await cursor.fetchone():
-                        files_skipped += 1
-                        logger.info(f"File already imported (hash match): {remote_path}")
-                        continue
+                        cursor = await db.execute(
+                            "SELECT id FROM media WHERE file_hash = ?",
+                            (file_hash,),
+                        )
+                        if await cursor.fetchone():
+                            files_skipped += 1
+                            logger.info(f"File already imported (hash match): {remote_path}")
+                            continue
 
-                    extracted = (
-                        metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
-                    )
+                        extracted = (
+                            metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                        )
 
-                    await utils.import_media_file(
-                        db=db,
-                        file_bytes=file_bytes,
-                        source_id=source_id,
-                        source_path=remote_path,
-                        title=Path(file_name).stem,
-                        mime_type=mime_type,
-                        auto_tag=auto_tag,
-                        extracted_metadata=extracted,
-                        file_hash=file_hash,
-                    )
+                        await utils.import_media_file(
+                            db=db,
+                            file_bytes=file_bytes,
+                            source_id=source_id,
+                            source_path=remote_path,
+                            title=Path(file_name).stem,
+                            mime_type=mime_type,
+                            auto_tag=auto_tag,
+                            extracted_metadata=extracted,
+                            file_hash=file_hash,
+                        )
 
-                    files_imported += 1
+                        files_imported += 1
+                    finally:
+                        del file_bytes
+                        gc.collect()
 
                 except Exception as e:
                     logger.error(f"Failed to import {remote_path}: {e}")

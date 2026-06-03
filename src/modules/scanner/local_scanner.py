@@ -1,5 +1,6 @@
 """Local filesystem source scanner."""
 
+import gc
 import logging
 import mimetypes
 from pathlib import Path
@@ -61,32 +62,36 @@ async def scan_local_source(
                 continue
 
             file_bytes = file_path.read_bytes()
-            file_hash = utils.calculate_file_hash(file_bytes)
+            try:
+                file_hash = utils.calculate_file_hash(file_bytes)
 
-            cursor = await db.execute(
-                "SELECT id FROM media WHERE file_hash = ?",
-                (file_hash,),
-            )
-            if await cursor.fetchone():
-                files_skipped += 1
-                logger.info(f"File already imported (hash match): {file_path}")
-                continue
+                cursor = await db.execute(
+                    "SELECT id FROM media WHERE file_hash = ?",
+                    (file_hash,),
+                )
+                if await cursor.fetchone():
+                    files_skipped += 1
+                    logger.info(f"File already imported (hash match): {file_path}")
+                    continue
 
-            extracted = metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                extracted = metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
 
-            await utils.import_media_file(
-                db=db,
-                file_bytes=file_bytes,
-                source_id=source_id,
-                source_path=relative_path,
-                title=file_path.stem,
-                mime_type=mime_type,
-                auto_tag=auto_tag,
-                extracted_metadata=extracted,
-                file_hash=file_hash,
-            )
+                await utils.import_media_file(
+                    db=db,
+                    file_bytes=file_bytes,
+                    source_id=source_id,
+                    source_path=relative_path,
+                    title=file_path.stem,
+                    mime_type=mime_type,
+                    auto_tag=auto_tag,
+                    extracted_metadata=extracted,
+                    file_hash=file_hash,
+                )
 
-            files_imported += 1
+                files_imported += 1
+            finally:
+                del file_bytes
+                gc.collect()
 
         except Exception as e:
             logger.error(f"Failed to import {file_path}: {e}")
