@@ -1003,12 +1003,9 @@ Pour les skills avec plusieurs pages déclarées statiquement (sans endpoint /pa
 
 ## Bibliographie scientifique (biblio/)
 
-Chaque skill dispose d'une bibliographie alimentée depuis Zotero (collection `forge/media-library`)
+Si le skill s'appuie sur de la littérature scientifique, une bibliographie est disponible
+dans le répertoire `biblio/`. Elle est alimentée depuis Zotero (collection `forge/media-library`)
 et enrichie par paper-reader (lecture approfondie avec extraction tableaux, formules, algorithmes).
-
-Les données sont stockées en **double** :
-- **`biblio/fiches/*.md`** — fiches markdown lisibles directement (git)
-- **Qdrant collection `forge_biblio_media-library`** — recherche sémantique vectorielle (OnyxSoma)
 
 ### Structure
 
@@ -1016,47 +1013,37 @@ Les données sont stockées en **double** :
 biblio/
     INDEX.md              # Table des articles (titre, auteurs, année)
     fiches/
-        ABC123.md         # Fiche complète (méthodologie, algorithmes, tableaux, formules)
+        ABC123.md         # Fiche de lecture complète (par clé Zotero)
         DEF456.md
 ```
 
-### Collection Qdrant dédiée
-
-Chaque skill a sa propre collection Qdrant : `forge_biblio_media-library` (ex: `forge_biblio_cr_engine`).
-Les articles sont découpés en sections vectorisées séparément :
-
-| Section | Contenu | Usage |
-|---------|---------|-------|
-| `abstract` | Résumé de l'article | Pertinence rapide |
-| `methodology` | Méthodes, protocoles, matériel | Comment c'est fait |
-| `results` | Résultats, statistiques | Ce qui a été trouvé |
-| `algorithm` | Pseudo-code, formules, algorithmes | Implémentation |
-| `table` | Tableaux extraits (markdown) | Données structurées |
-| `formula` | Formules LaTeX | Calculs, équations |
-| `synthesis` | Synthèse globale | Vue d'ensemble |
-
-### Commandes (utiliser `/forge-biblio`)
+### Utilisation en session de développement
 
 ```bash
-/forge-biblio sync                     # Sync nouveaux articles depuis Zotero → lecture → vectorisation
-/forge-biblio search "bone algorithm"  # Recherche sémantique dans la collection Qdrant dédiée
-/forge-biblio fiches                   # Liste les fiches disponibles
-/forge-biblio status                   # Statut (articles, fiches, vecteurs Qdrant)
+# Synchroniser la bibliographie depuis Zotero (lance paper-reader sur chaque article)
+curl -s -X POST http://10.0.0.13:4080/api/biblio/media-library/sync
+
+# Recherche sémantique dans les articles (via Qdrant)
+curl -s -X POST http://10.0.0.13:4080/api/biblio/media-library/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "bone density measurement algorithm", "limit": 5}'
+
+# Voir le statut (fiches, vecteurs, dernière sync)
+curl -s http://10.0.0.13:4080/api/biblio/media-library/status
+
+# Lister les fiches disponibles
+curl -s http://10.0.0.13:4080/api/biblio/media-library/fiches
 ```
-
-### RÈGLE OBLIGATOIRE
-
-**AVANT d'implémenter un algorithme, une méthode de calcul ou une technique issue de la littérature** :
-1. Chercher dans la biblio : `/forge-biblio search "description de ce que tu cherches"`
-2. Si un résultat pertinent existe, lire la fiche complète dans `biblio/fiches/{clé}.md`
-3. S'appuyer sur les algorithmes, formules et tableaux extraits pour l'implémentation
-4. Citer la source dans le code (commentaire avec DOI ou titre de l'article)
 
 ### Au démarrage de session
 
-1. Vérifier si `biblio/INDEX.md` existe → le lire pour connaître les articles disponibles
-2. La synchronisation Zotero se lance automatiquement en arrière-plan (nouveaux articles seulement)
-3. Utiliser `/forge-biblio search` tout au long du développement
+Si `biblio/INDEX.md` existe, **lisez-le** pour connaître les articles de référence.
+Les fiches dans `biblio/fiches/` contiennent les analyses détaillées : méthodologie,
+résultats, algorithmes, tableaux et formules extraits des PDFs.
+
+La recherche sémantique via l'API search interroge une base vectorielle Qdrant
+(collection `forge_biblio_media-library`) qui contient les sections des articles
+découpées par type (abstract, methodology, results, algorithm, synthesis).
 
 ---
 

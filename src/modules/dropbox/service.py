@@ -111,7 +111,7 @@ async def download_file(dropbox_path: str) -> bytes:
 
     token = await get_dropbox_token()
 
-    # Try Dropbox API first (recommended)
+    # Try Dropbox API (with generous timeout for large files)
     try:
         async with httpx.AsyncClient() as client:
             # Use json.dumps() to properly encode paths with non-ASCII characters
@@ -122,7 +122,7 @@ async def download_file(dropbox_path: str) -> bytes:
                     "Authorization": f"Bearer {token}",
                     "Dropbox-API-Arg": dropbox_arg,
                 },
-                timeout=60.0,
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
             )
             response.raise_for_status()
             logger.info(f"Downloaded {dropbox_path} ({len(response.content)} bytes)")

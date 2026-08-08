@@ -59,6 +59,17 @@ async def scan_dropbox_source(
                 files_skipped += 1
                 continue
 
+            # Check file size BEFORE downloading (Dropbox entries include size)
+            file_size = entry.get("size", 0)
+            if file_size > utils.MAX_FILE_BYTES:
+                logger.info(
+                    f"Skipping oversized file {file_path} "
+                    f"({file_size / 1024 / 1024:.0f} MB > "
+                    f"{utils.MAX_FILE_BYTES / 1024 / 1024:.0f} MB limit)"
+                )
+                files_skipped += 1
+                continue
+
             file_bytes = await dropbox_service.download_file(file_path)
             try:
                 file_hash = utils.calculate_file_hash(file_bytes)
