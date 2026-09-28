@@ -1,4 +1,4 @@
-"""Media Library - Main FastAPI application."""
+"""Media Library v2 - Main FastAPI application (Digikam + NAS)."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -14,23 +14,20 @@ try:
 except ImportError:
     OnyxClient = None
 
-from src.database import get_db_context, init_db
+from src.database import check_health, close_db, get_db_context, init_db, release_db_context
 from src.models import HealthResponse, InfoResponse
+from src.modules.catalog import files_routes as files_routes
 from src.modules.catalog import routes as catalog_routes
-from src.modules.dropbox import service as dropbox_service
 from src.modules.scanner import routes as scanner_routes
-from src.modules.scanner import service as scanner_service
 from src.modules.search import routes as search_routes
 from src.modules.sources import routes as sources_routes
+from src.modules.storage.registry import get_default, init_backends, list_backends
 from src.modules.tagger import routes as tagger_routes
 from src.modules.thumbnails import routes as thumbnail_routes
 
 logger = logging.getLogger(__name__)
 
-# APScheduler for cron jobs
 scheduler = None
-
-# OnyxClient for skill status visibility
 onyx = None
 
 
@@ -40,46 +37,48 @@ async def lifespan(app: FastAPI):
     global scheduler, onyx
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    # Initialize OnyxClient - signal UP status
+    # Initialize OnyxClient
     if OnyxClient:
         try:
-            logger.info("Initializing OnyxClient...")
             onyx = OnyxClient()
-            start_result = onyx.start()
-            logger.info(f"OnyxClient start() returned: {start_result}")
-            # Explicit status signal
+            onyx.start()
             try:
                 onyx.status("UP")
-                logger.info("OnyxClient status UP signaled")
             except (AttributeError, TypeError):
-                logger.debug("OnyxClient.status() method not available")
-            logger.info("OnyxClient initialized with UP status")
+                pass
+            logger.info("OnyxClient initialized")
         except Exception as e:
-            logger.error(f"Failed to start OnyxClient: {e}", exc_info=True)
+            logger.error(f"Failed to start OnyxClient: {e}")
             onyx = None
-    else:
-        logger.warning("OnyxClient not available")
 
-    logger.info("Initializing database...")
+    # Initialize storage backends
+    logger.info("Initializing storage backends...")
+    init_backends()
+    logger.info(f"Storage backends: {list_backends()}")
+
+    # Initialize database
+    logger.info("Initializing MariaDB connection pool...")
     await init_db()
 
+    # Start scheduler
     logger.info("Starting APScheduler...")
     scheduler = AsyncIOScheduler()
 
-    # Load sources and add cron jobs
+    conn = None
     try:
-        db = await get_db_context()
+        conn = await get_db_context()
         from src.modules.sources import service as sources_service
 
-        sources = await sources_service.list_sources(db)
+        sources = await sources_service.list_sources(conn)
         for source in sources:
             if source.get("enabled", False):
                 cron_schedule = source.get("cron_schedule", "0 */6 * * *")
-                # Parse cron expression: minute hour day month day_of_week
                 cron_parts = cron_schedule.split()
-                if len(cron_parts) == 5:
-                    minute, hour, day, month, day_of_week = cron_parts
-                    # Add job for this source
+                if len(cron_parts) != 5:
+                    logger.warning(f"Invalid cron for source {source['id']}: {cron_schedule}")
+                    continue
+                minute, hour, day, month, day_of_week = cron_parts
+                try:
                     scheduler.add_job(
                         _scan_source_scheduled,
                         "cron",
@@ -92,219 +91,201 @@ async def lifespan(app: FastAPI):
                         id=f"scan_source_{source['id']}",
                         replace_existing=True,
                     )
-                    logger.info(f"Scheduled cron scan for source {source['id']}: {cron_schedule}")
-                else:
-                    logger.warning(f"Invalid cron schedule for source {source['id']}: {cron_schedule}")
-
-        await db.close()
+                    logger.info(f"Scheduled scan for source {source['id']}: {cron_schedule}")
+                except Exception as job_err:
+                    logger.warning(f"Failed to schedule source {source['id']}: {job_err}")
     except Exception as e:
         logger.error(f"Failed to load sources for scheduling: {e}")
+    finally:
+        if conn:
+            await release_db_context(conn)
 
     scheduler.start()
-    logger.info("APScheduler started")
 
     yield
 
-    # Shutdown - signal DOWN status
+    # Shutdown
     if scheduler:
         scheduler.shutdown()
-        logger.info("APScheduler shutdown")
+    await close_db()
 
     if onyx:
         try:
-            # Explicit DOWN status signal
-            try:
-                onyx.status("DOWN")
-                logger.info("OnyxClient status DOWN signaled")
-            except (AttributeError, TypeError):
-                logger.debug("OnyxClient.status() method not available")
-            stop_result = onyx.stop()
-            logger.info(f"OnyxClient stop() returned: {stop_result}")
-        except Exception as e:
-            logger.warning(f"Failed to stop OnyxClient: {e}")
+            onyx.status("DOWN")
+            onyx.stop()
+        except Exception:
+            pass
 
 
 async def _scan_source_scheduled(source_id: int) -> None:
-    """Scan a source (scheduled task)."""
-    db = None
+    """Scan a source (scheduled task).
+
+    Args:
+        source_id: Source ID to scan.
+    """
+    conn = None
     try:
-        db = await get_db_context()
+        conn = await get_db_context()
+        from src.modules.scanner import service as scanner_service
         from src.modules.sources import service as sources_service
 
-        source = await sources_service.get_source(db, source_id)
+        source = await sources_service.get_source(conn, source_id)
         if source:
             logger.info(f"Running scheduled scan for source {source_id}")
-            # Signal WORKING status
-            if onyx:
-                try:
-                    onyx.status("WORKING")
-                except (AttributeError, TypeError):
-                    try:
-                        onyx.set_status("WORKING")
-                    except Exception:
-                        pass
-            await scanner_service.scan_source(db, source)
+            await scanner_service.scan_source(conn, source)
     except Exception as e:
         logger.error(f"Scheduled scan failed for source {source_id}: {e}")
     finally:
-        if db:
-            await db.close()
+        if conn:
+            await release_db_context(conn)
 
 
 # Create FastAPI app
 app = FastAPI(
     title="Media Library",
-    description="Image and video library with keyword classification",
-    version="1.0.0",
+    description="Image and video library with Digikam-compatible database and NAS storage",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (can be restricted)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers from modules
+# Include routers
 app.include_router(catalog_routes.router)
+app.include_router(files_routes.router)
 app.include_router(tagger_routes.router)
 app.include_router(thumbnail_routes.router)
 app.include_router(search_routes.router)
 app.include_router(sources_routes.router)
 app.include_router(scanner_routes.router)
 
-# Mount static files (dashboard)
+# Albums and integrations routers (lazy import to avoid circular)
+try:
+    from src.modules.albums import routes as albums_routes
+
+    app.include_router(albums_routes.router)
+except ImportError:
+    logger.debug("Albums module not yet available")
+
+try:
+    from src.modules.integrations import routes as integrations_routes
+
+    app.include_router(integrations_routes.router)
+except ImportError:
+    logger.debug("Integrations module not yet available")
+
+# Mount static files
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
-# Health check endpoint
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Health check endpoint.
 
     Returns:
-        Health status.
+        Health status with DB and storage status.
     """
-    try:
-        db = await get_db_context()
-        await db.execute("SELECT 1")
-        await db.close()
-        db_status = "ok"
-    except Exception as e:
-        logger.error(f"Database health check failed: {e}")
-        db_status = "error"
+    db_health = await check_health()
+    db_status = db_health.get("status", "error")
 
-    dropbox_status = None
+    nas_mounted = False
     try:
-        await dropbox_service.get_dropbox_token()
-        dropbox_status = "ok"
+        nas = get_default()
+        nas_mounted = hasattr(nas, "is_mounted") and nas.is_mounted()
     except Exception:
-        dropbox_status = "unavailable"
+        pass
 
-    return HealthResponse(status="ok", db=db_status, dropbox=dropbox_status)
+    return HealthResponse(
+        status="ok" if db_status == "ok" else "degraded",
+        db=db_status,
+        storage=",".join(list_backends()),
+        nas_mounted=nas_mounted,
+    )
 
 
-# Info endpoint
 @app.get("/info", response_model=InfoResponse)
 async def info() -> InfoResponse:
     """Get skill info.
 
     Returns:
-        Info with media count, tags count, etc.
+        Info with counts and storage backend.
     """
     try:
-        db = await get_db_context()
+        from src.database import fetchone
 
-        # Count media
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM media")
-        row = await cursor.fetchone()
-        total_media = dict(row)["cnt"] if row else 0
+        conn = await get_db_context()
 
-        # Count tags
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM tags")
-        row = await cursor.fetchone()
-        total_tags = dict(row)["cnt"] if row else 0
+        media_row = await fetchone(conn, "SELECT COUNT(*) as cnt FROM Images WHERE status = 1")
+        tag_row = await fetchone(conn, "SELECT COUNT(*) as cnt FROM Tags WHERE pid >= 0")
+        album_row = await fetchone(conn, "SELECT COUNT(*) as cnt FROM Albums")
+        source_row = await fetchone(conn, "SELECT COUNT(*) as cnt FROM ml_scan_sources")
 
-        # Count sources
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM scan_sources")
-        row = await cursor.fetchone()
-        total_sources = dict(row)["cnt"] if row else 0
+        await release_db_context(conn)
 
-        await db.close()
-
+        return InfoResponse(
+            version="2.0.0",
+            total_media=media_row["cnt"] if media_row else 0,
+            total_tags=tag_row["cnt"] if tag_row else 0,
+            total_albums=album_row["cnt"] if album_row else 0,
+            total_sources=source_row["cnt"] if source_row else 0,
+            storage_backend=",".join(list_backends()),
+        )
     except Exception as e:
         logger.error(f"Info endpoint failed: {e}")
-        total_media = 0
-        total_tags = 0
-        total_sources = 0
-
-    return InfoResponse(
-        version="1.0.0",
-        total_media=total_media,
-        total_tags=total_tags,
-        total_sources=total_sources,
-    )
+        return InfoResponse(
+            total_media=0,
+            total_tags=0,
+            total_albums=0,
+            total_sources=0,
+            storage_backend="error",
+        )
 
 
-# Cron status endpoint
 @app.get("/cron")
 async def cron_status() -> dict[str, Any]:
     """Get cron scheduler status.
 
     Returns:
-        Scheduler status with running jobs and task definitions.
+        Scheduler status with job info.
     """
     if not scheduler:
         return {"status": "disabled", "tasks": []}
-
     try:
         jobs = scheduler.get_jobs()
-        tasks = [
-            {
-                "id": job.id,
-                "next_run_time": str(job.next_run_time) if job.next_run_time else None,
-            }
-            for job in jobs
-        ]
         return {
             "status": "running",
             "jobs_count": len(jobs),
-            "tasks": tasks,
+            "tasks": [{"id": j.id, "next_run_time": str(j.next_run_time)} for j in jobs],
         }
     except Exception as e:
-        logger.error(f"Failed to get cron status: {e}")
         return {"status": "error", "error": str(e), "tasks": []}
 
 
-# Root endpoint
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint.
 
     Returns:
-        Welcome message.
+        Welcome message with links.
     """
     return {
-        "message": "Media Library API",
+        "message": "Media Library API v2.0",
         "docs": "/docs",
         "health": "/health",
         "info": "/info",
         "dashboard": "/static/",
-        "cron": "/cron",
     }
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "src.main:app",
-        host="0.0.0.0",
-        port=8202,
-        reload=False,
-    )
+    uvicorn.run("src.main:app", host="0.0.0.0", port=8202, reload=False)

@@ -1,17 +1,19 @@
-"""Source management service for scan configuration."""
+"""Source management service for scan configuration (MariaDB)."""
 
 import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import aiosqlite
+import aiomysql
+
+from src.database import execute, fetchall, fetchone, insert
 
 logger = logging.getLogger(__name__)
 
 
 async def create_source(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
     name: str,
     source_type: str,
     config: dict[str, Any],
@@ -23,14 +25,14 @@ async def create_source(
     """Create a new scan source.
 
     Args:
-        db: Database connection.
-        name: Source name (display label).
-        source_type: Type ('dropbox', 'local', 'ssh').
-        config: Source configuration dict (type-specific).
+        conn: Database connection.
+        name: Source name.
+        source_type: Type ('dropbox', 'local', 'ssh', 'nas').
+        config: Source configuration dict.
         enabled: Whether source is enabled.
         recursive: Scan subfolders.
         auto_tag: Suggest tags for new imports.
-        cron_schedule: Cron expression for automatic scans.
+        cron_schedule: Cron expression.
 
     Returns:
         Source ID.
@@ -38,190 +40,154 @@ async def create_source(
     Raises:
         ValueError: If source_type invalid.
     """
-    if source_type not in ("dropbox", "local", "ssh"):
-        raise ValueError(f"Invalid source_type: {source_type}")
+    valid_types = ("dropbox", "local", "ssh", "nas")
+    if source_type not in valid_types:
+        raise ValueError(f"Invalid source_type: {source_type}. Must be one of {valid_types}")
 
-    config_json = json.dumps(config)
-
-    await db.execute(
-        """
-        INSERT INTO scan_sources (
-            name, source_type, config_json, enabled, recursive,
-            auto_tag, cron_schedule
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (name, source_type, config_json, int(enabled), int(recursive), int(auto_tag), cron_schedule),
+    source_id = await insert(
+        conn,
+        """INSERT INTO ml_scan_sources
+           (name, source_type, config_json, enabled, `recursive`, `auto_tag`, cron_schedule)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (name, source_type, json.dumps(config), int(enabled), int(recursive), int(auto_tag), cron_schedule),
     )
-    await db.commit()
-
-    # Get inserted ID
-    cursor = await db.execute("SELECT last_insert_rowid() as id")
-    row = await cursor.fetchone()
-    source_id = dict(row)["id"] if row else 0
 
     logger.info(f"Created scan source {source_id}: {name}")
     return source_id
 
 
-async def get_source(db: aiosqlite.Connection, source_id: int) -> dict[str, Any] | None:
+async def get_source(conn: aiomysql.Connection, source_id: int) -> dict[str, Any] | None:
     """Get source by ID.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         source_id: Source ID.
 
     Returns:
-        Source dict with parsed config, or None if not found.
+        Source dict with parsed config, or None.
     """
-    cursor = await db.execute("SELECT * FROM scan_sources WHERE id = ?", (source_id,))
-    row = await cursor.fetchone()
+    row = await fetchone(conn, "SELECT * FROM ml_scan_sources WHERE id = %s", (source_id,))
     if not row:
         return None
-
-    source = dict(row)
-    source["config"] = json.loads(source.get("config_json", "{}"))
-    del source["config_json"]
-    source["enabled"] = bool(source.get("enabled", 0))
-    source["recursive"] = bool(source.get("recursive", 0))
-    source["auto_tag"] = bool(source.get("auto_tag", 0))
-
-    return source
+    return _parse_source(row)
 
 
-async def list_sources(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+async def list_sources(conn: aiomysql.Connection) -> list[dict[str, Any]]:
     """List all scan sources.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
 
     Returns:
         List of source dicts.
     """
-    cursor = await db.execute("SELECT * FROM scan_sources ORDER BY name")
-    rows = await cursor.fetchall()
-
-    sources = []
-    for row in rows:
-        source = dict(row)
-        source["config"] = json.loads(source.get("config_json", "{}"))
-        del source["config_json"]
-        source["enabled"] = bool(source.get("enabled", 0))
-        source["recursive"] = bool(source.get("recursive", 0))
-        source["auto_tag"] = bool(source.get("auto_tag", 0))
-        sources.append(source)
-
-    return sources
+    rows = await fetchall(conn, "SELECT * FROM ml_scan_sources ORDER BY name")
+    return [_parse_source(r) for r in rows]
 
 
-async def update_source(
-    db: aiosqlite.Connection,
-    source_id: int,
-    **kwargs: Any,
-) -> bool:
+async def update_source(conn: aiomysql.Connection, source_id: int, **kwargs: Any) -> bool:
     """Update source fields.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         source_id: Source ID.
-        **kwargs: Fields to update (name, config, enabled, recursive, etc.).
+        **kwargs: Fields to update.
 
     Returns:
-        True if updated, False if not found.
+        True if updated.
     """
-    # Prepare update statement
     updates = []
-    values = []
+    values: list[Any] = []
 
-    if "name" in kwargs:
-        updates.append("name = ?")
-        values.append(kwargs["name"])
+    field_map = {
+        "name": "name",
+        "config": "config_json",
+        "enabled": "enabled",
+        "recursive": "`recursive`",
+        "auto_tag": "`auto_tag`",
+        "cron_schedule": "cron_schedule",
+    }
 
-    if "config" in kwargs:
-        updates.append("config_json = ?")
-        values.append(json.dumps(kwargs["config"]))
-
-    if "enabled" in kwargs:
-        updates.append("enabled = ?")
-        values.append(int(kwargs["enabled"]))
-
-    if "recursive" in kwargs:
-        updates.append("recursive = ?")
-        values.append(int(kwargs["recursive"]))
-
-    if "auto_tag" in kwargs:
-        updates.append("auto_tag = ?")
-        values.append(int(kwargs["auto_tag"]))
-
-    if "cron_schedule" in kwargs:
-        updates.append("cron_schedule = ?")
-        values.append(kwargs["cron_schedule"])
+    for key, col in field_map.items():
+        if key in kwargs:
+            updates.append(f"{col} = %s")
+            val = kwargs[key]
+            if key == "config":
+                val = json.dumps(val)
+            elif key in ("enabled", "recursive", "auto_tag"):
+                val = int(val)
+            values.append(val)
 
     if not updates:
         return False
 
     values.append(source_id)
-    sql = f"UPDATE scan_sources SET {', '.join(updates)} WHERE id = ?"
-
-    cursor = await db.execute(sql, values)
-    await db.commit()
-
-    if cursor.rowcount > 0:
+    affected = await execute(conn, f"UPDATE ml_scan_sources SET {', '.join(updates)} WHERE id = %s", tuple(values))
+    if affected > 0:
         logger.info(f"Updated scan source {source_id}")
-        return True
-
-    return False
+    return affected > 0
 
 
-async def delete_source(db: aiosqlite.Connection, source_id: int) -> bool:
+async def delete_source(conn: aiomysql.Connection, source_id: int) -> bool:
     """Delete source by ID.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         source_id: Source ID.
 
     Returns:
-        True if deleted, False if not found.
+        True if deleted.
     """
-    cursor = await db.execute("DELETE FROM scan_sources WHERE id = ?", (source_id,))
-    await db.commit()
-
-    if cursor.rowcount > 0:
+    affected = await execute(conn, "DELETE FROM ml_scan_sources WHERE id = %s", (source_id,))
+    if affected > 0:
         logger.info(f"Deleted scan source {source_id}")
-        return True
-
-    return False
+    return affected > 0
 
 
-async def toggle_source(db: aiosqlite.Connection, source_id: int, enabled: bool) -> bool:
+async def toggle_source(conn: aiomysql.Connection, source_id: int, enabled: bool) -> bool:
     """Enable or disable a source.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         source_id: Source ID.
         enabled: New enabled state.
 
     Returns:
-        True if updated, False if not found.
+        True if updated.
     """
-    return await update_source(db, source_id, enabled=enabled)
+    return await update_source(conn, source_id, enabled=enabled)
 
 
-async def update_scan_status(
-    db: aiosqlite.Connection,
-    source_id: int,
-    status: str,
-) -> None:
-    """Update last scan time and status for a source.
+async def update_scan_status(conn: aiomysql.Connection, source_id: int, status: str) -> None:
+    """Update last scan time and status.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         source_id: Source ID.
         status: Status string ('ok', 'error', 'running').
     """
-    now = datetime.now(UTC).isoformat()
-
-    await db.execute(
-        "UPDATE scan_sources SET last_scan_at = ?, last_scan_status = ? WHERE id = ?",
+    now = datetime.now(UTC)
+    await execute(
+        conn,
+        "UPDATE ml_scan_sources SET last_scan_at = %s, last_scan_status = %s WHERE id = %s",
         (now, status, source_id),
     )
-    await db.commit()
+
+
+def _parse_source(row: dict[str, Any]) -> dict[str, Any]:
+    """Parse source row from database.
+
+    Args:
+        row: Raw database row.
+
+    Returns:
+        Parsed source dict.
+    """
+    source = dict(row)
+    source["config"] = json.loads(source.get("config_json", "{}"))
+    if "config_json" in source:
+        del source["config_json"]
+    source["enabled"] = bool(source.get("enabled", 0))
+    source["recursive"] = bool(source.get("recursive", 0))
+    source["auto_tag"] = bool(source.get("auto_tag", 0))
+    return source

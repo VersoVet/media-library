@@ -1,13 +1,17 @@
 {
-    "strategy": "active",
-    "entries": [
-        {
-            "data_type": "generated_files",
-            "paths": [
-                "/opt/onyx/skills/media-library/data/"
-            ],
-            "criticality": "low",
-            "description": "Donn\u00e9es media-library"
-        }
-    ]
+  "strategy": "active",
+  "entries": [
+    {
+      "data_type": "generated_files",
+      "paths": ["/opt/onyx/data/media-library/thumbnails/"],
+      "criticality": "low",
+      "description": "Thumbnails WebP générés (reconstructibles depuis les originaux)"
+    },
+    {
+      "data_type": "config_files",
+      "paths": ["/opt/onyx/skills/media-library/config/"],
+      "criticality": "medium",
+      "description": "Configuration YAML du skill (endpoints, stockage, BDD)"
+    }
+  ]
 }

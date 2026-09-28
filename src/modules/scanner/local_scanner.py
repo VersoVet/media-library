@@ -74,7 +74,9 @@ async def scan_local_source(
                     logger.info(f"File already imported (hash match): {file_path}")
                     continue
 
-                extracted = metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                extracted = (
+                    metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                )
 
                 await utils.import_media_file(
                     db=db,

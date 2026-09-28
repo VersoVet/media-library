@@ -174,7 +174,9 @@ async def scan_ssh_source(
                             continue
 
                         extracted = (
-                            metadata.extract_image_metadata(file_bytes) if metadata.is_supported_image(mime_type) else {}
+                            metadata.extract_image_metadata(file_bytes)
+                            if metadata.is_supported_image(mime_type)
+                            else {}
                         )
 
                         await utils.import_media_file(

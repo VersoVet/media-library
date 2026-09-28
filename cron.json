@@ -1,6 +1,15 @@
 {
   "tasks": [
     {
+      "id": "daily-health-check",
+      "name": "Daily Health Check",
+      "schedule": "0 0 * * *",
+      "command": {"type": "script", "script": "/opt/onyx/forge/bin/onyx-health-check"},
+      "timeout_seconds": 120,
+      "enabled": true,
+      "notify_on_failure": true
+    },
+    {
       "id": "scan-all-sources",
       "name": "Scan All Enabled Sources",
       "description": "Periodically scan all enabled media sources for new files",

@@ -98,7 +98,8 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                 result = subprocess.run(
                     [
                         "ffmpeg",
-                        "-t", "2",  # Limit input duration to first 2 seconds
+                        "-t",
+                        "2",  # Limit input duration to first 2 seconds
                         "-i",
                         dropbox_path,
                         "-ss",
@@ -118,7 +119,8 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                 result = subprocess.run(
                     [
                         "ffmpeg",
-                        "-t", "0.1",
+                        "-t",
+                        "0.1",
                         "-i",
                         dropbox_path,
                         "-vf",
@@ -130,10 +132,7 @@ async def generate_video_thumbnail(dropbox_path: str, media_id: str) -> Path | N
                 )
 
             if result.returncode != 0:
-                logger.warning(
-                    f"ffmpeg extract failed for {media_id}: "
-                    f"{result.stderr.decode()[:200]}"
-                )
+                logger.warning(f"ffmpeg extract failed for {media_id}: {result.stderr.decode()[:200]}")
                 return None
 
             # Load frames and create GIF

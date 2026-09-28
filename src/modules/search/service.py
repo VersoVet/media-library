@@ -1,236 +1,169 @@
-"""Full-text search service using SQLite FTS5."""
+"""Search service using MariaDB (Digikam-compatible)."""
 
-import json
 import logging
 from typing import Any
 
-import aiosqlite
+import aiomysql
+
+from src.database import IMAGE_CATEGORY_IMAGE, IMAGE_CATEGORY_VIDEO, IMAGE_STATUS_VISIBLE, fetchall, fetchone
 
 logger = logging.getLogger(__name__)
 
 
 async def list_all_media(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
     media_type: str | None = None,
+    album_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
     """List all media with optional filtering.
 
     Args:
-        db: Database connection.
-        media_type: Filter by 'image' or 'video' (optional).
+        conn: Database connection.
+        media_type: Filter by 'image' or 'video'.
+        album_id: Filter by album.
         limit: Max results.
         offset: Result offset.
 
     Returns:
         Tuple of (media list, total count).
     """
-    # Build WHERE clause
-    where_sql = ""
-    params: list[Any] = []
+    where_parts = ["i.status = %s"]
+    params: list[Any] = [IMAGE_STATUS_VISIBLE]
 
     if media_type:
-        where_sql = "WHERE media_type = ?"
-        params.append(media_type)
+        cat = IMAGE_CATEGORY_IMAGE if media_type == "image" else IMAGE_CATEGORY_VIDEO
+        where_parts.append("i.category = %s")
+        params.append(cat)
+    if album_id is not None:
+        where_parts.append("i.album = %s")
+        params.append(album_id)
 
-    # Count total
-    count_sql = f"SELECT COUNT(*) as cnt FROM media {where_sql}"
-    count_cursor = await db.execute(count_sql, params)
-    count_row = await count_cursor.fetchone()
-    total = dict(count_row)["cnt"] if count_row else 0
+    where_sql = " AND ".join(where_parts)
 
-    # Fetch results
-    results_sql = f"""
-        SELECT *
-        FROM media
-        {where_sql}
-        ORDER BY created_at DESC
-        LIMIT ? OFFSET ?
-    """
-    results_params = params + [limit, offset]
+    count_row = await fetchone(conn, f"SELECT COUNT(*) as cnt FROM Images i WHERE {where_sql}", tuple(params))
+    total = count_row["cnt"] if count_row else 0
 
-    cursor = await db.execute(results_sql, results_params)
-    rows = await cursor.fetchall()
+    rows = await fetchall(
+        conn,
+        f"""SELECT i.id, i.album, i.name, i.category, i.fileSize, i.uniqueHash,
+                   i.modificationDate,
+                   ii.width, ii.height, ii.format, ii.rating, ii.creationDate,
+                   a.relativePath as album_path
+            FROM Images i
+            LEFT JOIN ImageInformation ii ON i.id = ii.imageid
+            LEFT JOIN Albums a ON i.album = a.id
+            WHERE {where_sql}
+            ORDER BY COALESCE(ii.creationDate, i.modificationDate) DESC
+            LIMIT %s OFFSET %s""",
+        tuple(params) + (limit, offset),
+    )
 
-    # Convert to dicts and fetch tags
-    results = []
-    for row in rows:
-        media = dict(row)
-        media["metadata"] = json.loads(media.get("metadata_json", "{}"))
-        del media["metadata_json"]
-
-        # Fetch tags
-        tags_cursor = await db.execute(
-            """
-            SELECT t.name FROM tags t
-            JOIN media_tags mt ON t.id = mt.tag_id
-            WHERE mt.media_id = ?
-            """,
-            (media["id"],),
-        )
-        tags_rows = await tags_cursor.fetchall()
-        media["tags"] = [dict(r)["name"] for r in tags_rows]
-        results.append(media)
-
-    logger.info(f"Listed {len(results)} media items (total: {total})")
-    return results, total
+    return await _enrich_results(conn, rows), total
 
 
 async def search(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
     query: str,
     media_type: str | None = None,
+    album_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Search media using FTS5.
+    """Search media by name, title, tags, or description.
+
+    Uses LIKE queries on name + ImageProperties + Tags.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         query: Search query string.
-        media_type: Filter by 'image' or 'video' (optional).
+        media_type: Filter by 'image' or 'video'.
+        album_id: Filter by album.
         limit: Max results.
         offset: Result offset.
 
     Returns:
         Tuple of (results list, total count).
     """
-    # Build FTS5 query
-    fts_query = query.replace('"', '""')  # Escape quotes
-
-    # Build WHERE clause
-    where_parts = []
-    params: list[Any] = []
+    like_query = f"%{query}%"
+    where_parts = ["i.status = %s"]
+    params: list[Any] = [IMAGE_STATUS_VISIBLE]
 
     if media_type:
-        where_parts.append("m.media_type = ?")
-        params.append(media_type)
+        cat = IMAGE_CATEGORY_IMAGE if media_type == "image" else IMAGE_CATEGORY_VIDEO
+        where_parts.append("i.category = %s")
+        params.append(cat)
+    if album_id is not None:
+        where_parts.append("i.album = %s")
+        params.append(album_id)
 
-    # Search FTS5 table, join back to media
-    where_sql = " AND " + " AND ".join(where_parts) if where_parts else ""
+    where_sql = " AND ".join(where_parts)
 
-    # First, count total
+    # Search across name, title (ImageProperties), tags, and comments
+    search_sql = f"""
+        SELECT DISTINCT i.id, i.album, i.name, i.category, i.fileSize, i.uniqueHash,
+               i.modificationDate,
+               ii.width, ii.height, ii.format, ii.rating, ii.creationDate,
+               a.relativePath as album_path
+        FROM Images i
+        LEFT JOIN ImageInformation ii ON i.id = ii.imageid
+        LEFT JOIN Albums a ON i.album = a.id
+        LEFT JOIN ImageProperties ip ON i.id = ip.imageid
+        LEFT JOIN ImageTags it ON i.id = it.imageid
+        LEFT JOIN Tags t ON it.tagid = t.id
+        LEFT JOIN ImageComments ic ON i.id = ic.imageid
+        WHERE {where_sql}
+          AND (i.name LIKE %s
+               OR ip.value LIKE %s
+               OR t.name LIKE %s
+               OR ic.comment LIKE %s)
+        ORDER BY COALESCE(ii.creationDate, i.modificationDate) DESC
+    """
+
+    # Count
     count_sql = f"""
-        SELECT COUNT(DISTINCT m.id) as cnt
-        FROM media_fts f
-        JOIN media m ON f.rowid = m.rowid
-        WHERE media_fts MATCH ?
-        {where_sql}
+        SELECT COUNT(DISTINCT i.id) as cnt
+        FROM Images i
+        LEFT JOIN ImageProperties ip ON i.id = ip.imageid
+        LEFT JOIN ImageTags it ON i.id = it.imageid
+        LEFT JOIN Tags t ON it.tagid = t.id
+        LEFT JOIN ImageComments ic ON i.id = ic.imageid
+        WHERE {where_sql}
+          AND (i.name LIKE %s OR ip.value LIKE %s OR t.name LIKE %s OR ic.comment LIKE %s)
     """
-    count_params = [fts_query] + params
+    count_params = tuple(params) + (like_query, like_query, like_query, like_query)
+    count_row = await fetchone(conn, count_sql, count_params)
+    total = count_row["cnt"] if count_row else 0
 
-    count_cursor = await db.execute(count_sql, count_params)
-    count_row = await count_cursor.fetchone()
-    total = dict(count_row)["cnt"] if count_row else 0
+    search_params = tuple(params) + (like_query, like_query, like_query, like_query, limit, offset)
+    rows = await fetchall(conn, search_sql + " LIMIT %s OFFSET %s", search_params)
 
-    # Fetch results
-    results_sql = f"""
-        SELECT DISTINCT m.*
-        FROM media_fts f
-        JOIN media m ON f.rowid = m.rowid
-        WHERE media_fts MATCH ?
-        {where_sql}
-        ORDER BY m.created_at DESC
-        LIMIT ? OFFSET ?
-    """
-    results_params = [fts_query] + params + [limit, offset]
-
-    cursor = await db.execute(results_sql, results_params)
-    rows = await cursor.fetchall()
-
-    # Convert to dicts and fetch tags
-    results = []
-    for row in rows:
-        media = dict(row)
-        media["metadata"] = json.loads(media.get("metadata_json", "{}"))
-        del media["metadata_json"]
-
-        # Fetch tags
-        tags_cursor = await db.execute(
-            """
-            SELECT t.name FROM tags t
-            JOIN media_tags mt ON t.id = mt.tag_id
-            WHERE mt.media_id = ?
-            """,
-            (media["id"],),
-        )
-        tags_rows = await tags_cursor.fetchall()
-        media["tags"] = [dict(r)["name"] for r in tags_rows]
-        results.append(media)
-
-    logger.info(f"Search query '{query}': {len(results)} results (total: {total})")
-    return results, total
+    return await _enrich_results(conn, rows), total
 
 
-async def update_fts_index(db: aiosqlite.Connection, media_id: str) -> None:
-    """Update FTS5 index for a media item.
-
-    Args:
-        db: Database connection.
-        media_id: Media ID.
-    """
-    # Get media with tags
-    cursor = await db.execute(
-        """
-        SELECT m.title, m.description, GROUP_CONCAT(t.name, ' ') as tags
-        FROM media m
-        LEFT JOIN media_tags mt ON m.id = mt.media_id
-        LEFT JOIN tags t ON mt.tag_id = t.id
-        WHERE m.id = ?
-        GROUP BY m.id
-        """,
-        (media_id,),
-    )
-    row = await cursor.fetchone()
-    if not row:
-        return
-
-    row_dict = dict(row)
-    title = row_dict.get("title", "")
-    description = row_dict.get("description", "")
-    tags = row_dict.get("tags", "")
-
-    # Delete old index entry
-    await db.execute("DELETE FROM media_fts WHERE rowid = (SELECT rowid FROM media WHERE id = ?)", (media_id,))
-
-    # Insert new index entry
-    await db.execute(
-        """
-        INSERT INTO media_fts (rowid, title, description, tags)
-        SELECT rowid, ?, ?, ?
-        FROM media
-        WHERE id = ?
-        """,
-        (title, description, tags, media_id),
-    )
-    await db.commit()
-
-
-async def get_all_tags(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+async def get_all_tags(conn: aiomysql.Connection) -> list[dict[str, Any]]:
     """Get all tags with media count.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
 
     Returns:
-        List of tag dicts with id, name, count.
+        List of tag dicts with id, name, pid, count.
     """
-    cursor = await db.execute(
-        """
-        SELECT t.id, t.name, COUNT(mt.media_id) as count
-        FROM tags t
-        LEFT JOIN media_tags mt ON t.id = mt.tag_id
-        GROUP BY t.id, t.name
-        ORDER BY COUNT(mt.media_id) DESC
-        """
+    return await fetchall(
+        conn,
+        """SELECT t.id, t.name, t.pid, COUNT(it.imageid) as count
+           FROM Tags t
+           LEFT JOIN ImageTags it ON t.id = it.tagid
+           WHERE t.pid >= 0
+           GROUP BY t.id, t.name, t.pid
+           ORDER BY count DESC""",
     )
-    rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
 
 
 async def get_media_by_tag(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
     tag_name: str,
     limit: int = 20,
     offset: int = 0,
@@ -238,7 +171,7 @@ async def get_media_by_tag(
     """Get media for a specific tag.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
         tag_name: Tag name.
         limit: Max results.
         offset: Result offset.
@@ -246,51 +179,70 @@ async def get_media_by_tag(
     Returns:
         Tuple of (media list, total count).
     """
-    # Count total
-    count_cursor = await db.execute(
-        """
-        SELECT COUNT(DISTINCT mt.media_id) as cnt
-        FROM media_tags mt
-        JOIN tags t ON mt.tag_id = t.id
-        WHERE t.name = ?
-        """,
-        (tag_name,),
+    count_row = await fetchone(
+        conn,
+        """SELECT COUNT(DISTINCT it.imageid) as cnt
+           FROM ImageTags it JOIN Tags t ON it.tagid = t.id
+           JOIN Images i ON it.imageid = i.id
+           WHERE t.name = %s AND i.status = %s""",
+        (tag_name, IMAGE_STATUS_VISIBLE),
     )
-    count_row = await count_cursor.fetchone()
-    total = dict(count_row)["cnt"] if count_row else 0
+    total = count_row["cnt"] if count_row else 0
 
-    # Fetch media
-    cursor = await db.execute(
-        """
-        SELECT DISTINCT m.*
-        FROM media m
-        JOIN media_tags mt ON m.id = mt.media_id
-        JOIN tags t ON mt.tag_id = t.id
-        WHERE t.name = ?
-        ORDER BY m.created_at DESC
-        LIMIT ? OFFSET ?
-        """,
-        (tag_name, limit, offset),
+    rows = await fetchall(
+        conn,
+        """SELECT DISTINCT i.id, i.album, i.name, i.category, i.fileSize, i.uniqueHash,
+                  i.modificationDate,
+                  ii.width, ii.height, ii.format, ii.rating, ii.creationDate,
+                  a.relativePath as album_path
+           FROM Images i
+           JOIN ImageTags it ON i.id = it.imageid
+           JOIN Tags t ON it.tagid = t.id
+           LEFT JOIN ImageInformation ii ON i.id = ii.imageid
+           LEFT JOIN Albums a ON i.album = a.id
+           WHERE t.name = %s AND i.status = %s
+           ORDER BY COALESCE(ii.creationDate, i.modificationDate) DESC
+           LIMIT %s OFFSET %s""",
+        (tag_name, IMAGE_STATUS_VISIBLE, limit, offset),
     )
-    rows = await cursor.fetchall()
 
-    media_list = []
+    return await _enrich_results(conn, rows), total
+
+
+async def _enrich_results(
+    conn: aiomysql.Connection,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Enrich image rows with properties and tags.
+
+    Args:
+        conn: Database connection.
+        rows: Raw image rows from query.
+
+    Returns:
+        Enriched media dicts.
+    """
+    results = []
     for row in rows:
         media = dict(row)
-        media["metadata"] = json.loads(media.get("metadata_json", "{}"))
-        del media["metadata_json"]
+        img_id = media["id"]
+
+        # Fetch ml: properties
+        props = await fetchall(
+            conn,
+            "SELECT property, value FROM ImageProperties WHERE imageid = %s AND property LIKE 'ml:%%'",
+            (img_id,),
+        )
+        for p in props:
+            media[p["property"].replace("ml:", "")] = p["value"]
 
         # Fetch tags
-        tags_cursor = await db.execute(
-            """
-            SELECT t.name FROM tags t
-            JOIN media_tags mt ON t.id = mt.tag_id
-            WHERE mt.media_id = ?
-            """,
-            (media["id"],),
+        tags = await fetchall(
+            conn,
+            "SELECT t.name FROM Tags t JOIN ImageTags it ON t.id = it.tagid WHERE it.imageid = %s AND t.pid >= 0",
+            (img_id,),
         )
-        tags_rows = await tags_cursor.fetchall()
-        media["tags"] = [dict(r)["name"] for r in tags_rows]
-        media_list.append(media)
+        media["tags"] = [t["name"] for t in tags]
+        results.append(media)
 
-    return media_list, total
+    return results

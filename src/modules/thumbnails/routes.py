@@ -1,17 +1,17 @@
-"""Thumbnail serving routes."""
+"""Thumbnail serving routes (storage-backend aware)."""
 
 import logging
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from aiosqlite import Connection
+import aiomysql
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from src.database import get_db
 from src.modules.catalog import service as catalog_service
-from src.modules.dropbox import service as dropbox_service
+from src.modules.storage.registry import get_backend
 
 from . import service
 
@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api", tags=["thumbnails"])
 
 @router.get("/media/{media_id}/thumbnail")
 async def get_thumbnail(
-    media_id: str,
-    db: Connection = Depends(get_db),
+    media_id: int,
+    conn: aiomysql.Connection = Depends(get_db),
 ) -> FileResponse:
     """Get thumbnail for media.
 
@@ -30,55 +30,46 @@ async def get_thumbnail(
 
     Args:
         media_id: Media ID.
-        db: Database connection.
+        conn: Database connection.
 
     Returns:
-        Thumbnail file response (webp).
-
-    Raises:
-        HTTPException: If media not found or thumbnail generation fails.
+        Thumbnail file response (webp or gif).
     """
-    # Get media
-    media = await catalog_service.get_media(db, media_id)
+    media = await catalog_service.get_media(conn, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    # Check if thumbnail exists
-    is_video = media.get("media_type") == "video"
-    thumb_path = service.get_thumbnail_path(media_id, is_video=is_video)
+    from src.database import IMAGE_CATEGORY_IMAGE
+
+    is_video = media.get("category") != IMAGE_CATEGORY_IMAGE
+    thumb_path = service.get_thumbnail_path(str(media_id), is_video=is_video)
     if thumb_path.exists():
-        media_type = "image/gif" if is_video else "image/webp"
-        return FileResponse(path=thumb_path, media_type=media_type)
+        content_type = "image/gif" if is_video else "image/webp"
+        return FileResponse(path=thumb_path, media_type=content_type)
 
-    # Generate thumbnail
+    # Generate thumbnail from storage backend
     try:
-        from src.modules.dropbox import service as dropbox_service
+        backend_name = media.get("storage_backend", "nas")
+        storage_path = media.get("storage_path", "")
+        backend = get_backend(backend_name)
 
-        if media.get("media_type") == "image":
-            # Download image and generate thumbnail
-            img_bytes = await dropbox_service.download_file(media["dropbox_path"])
-            await service.generate_image_thumbnail(img_bytes, media_id)
-
-        elif media.get("media_type") == "video":
-            # Download video and generate GIF thumbnail
-            video_bytes = await dropbox_service.download_file(media["dropbox_path"])
-            # Save to temp file
-            with tempfile.NamedTemporaryFile(
-                suffix=".mp4", delete=False
-            ) as tmp:
+        if not is_video:
+            img_bytes = await backend.download(storage_path)
+            await service.generate_image_thumbnail(img_bytes, str(media_id))
+        else:
+            video_bytes = await backend.download(storage_path)
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp.write(video_bytes)
                 tmp_path = tmp.name
             try:
-                await service.generate_video_thumbnail(tmp_path, media_id)
+                await service.generate_video_thumbnail(tmp_path, str(media_id))
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
 
-        # Return generated thumbnail
         if thumb_path.exists():
-            media_type = "image/gif" if is_video else "image/webp"
-            return FileResponse(path=thumb_path, media_type=media_type)
-        else:
-            raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
+            content_type = "image/gif" if is_video else "image/webp"
+            return FileResponse(path=thumb_path, media_type=content_type)
+        raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
 
     except HTTPException:
         raise
@@ -89,83 +80,66 @@ async def get_thumbnail(
 
 @router.post("/admin/regenerate-video-thumbnails")
 async def regenerate_video_thumbnails(
-    db: Connection = Depends(get_db),
+    conn: aiomysql.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     """Regenerate GIF thumbnails for all video media.
 
-    Downloads each video from Dropbox and generates a lightweight GIF.
-
     Args:
-        db: Database connection.
+        conn: Database connection.
 
     Returns:
         Report with success/failure counts.
-
-    Raises:
-        HTTPException: If database operation fails.
     """
+    import asyncio
+
+    from src.database import IMAGE_CATEGORY_VIDEO, IMAGE_STATUS_VISIBLE, fetchall
+
     try:
-        # Get all videos
-        cursor = await db.execute(
-            "SELECT id, dropbox_path FROM media WHERE media_type = 'video'",
+        videos = await fetchall(
+            conn,
+            "SELECT i.id FROM Images i WHERE i.category = %s AND i.status = %s",
+            (IMAGE_CATEGORY_VIDEO, IMAGE_STATUS_VISIBLE),
         )
-        videos = list(await cursor.fetchall())
 
         success_count = 0
         failure_count = 0
         errors: list[str] = []
 
         for video in videos:
-            video_id = dict(video)["id"]
-            dropbox_path = dict(video)["dropbox_path"]
-
+            video_id = video["id"]
             try:
-                logger.info(f"Regenerating GIF for video {video_id}")
+                media = await catalog_service.get_media(conn, video_id)
+                if not media:
+                    continue
 
-                # Download video
-                video_bytes = await dropbox_service.download_file(dropbox_path)
+                backend_name = media.get("storage_backend", "nas")
+                storage_path = media.get("storage_path", "")
+                backend = get_backend(backend_name)
 
-                # Save to temp file
-                with tempfile.NamedTemporaryFile(
-                    suffix=".mp4", delete=False
-                ) as tmp:
+                video_bytes = await backend.download(storage_path)
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                     tmp.write(video_bytes)
                     tmp_path = tmp.name
 
                 try:
-                    # Generate GIF with timeout protection
-                    import asyncio
                     result = await asyncio.wait_for(
-                        service.generate_video_thumbnail(tmp_path, video_id),
+                        service.generate_video_thumbnail(tmp_path, str(video_id)),
                         timeout=20.0,
                     )
                     if result:
                         success_count += 1
-                        logger.info(f"✓ GIF generated for {video_id}")
                     else:
                         failure_count += 1
-                        error_msg = f"{video_id}: Generation failed (None returned)"
-                        errors.append(error_msg)
-                        logger.warning(error_msg)
+                        errors.append(f"{video_id}: Generation failed")
                 except TimeoutError:
                     failure_count += 1
-                    error_msg = f"{video_id}: Timeout (>20s)"
-                    errors.append(error_msg)
-                    logger.error(error_msg)
+                    errors.append(f"{video_id}: Timeout (>20s)")
                 finally:
-                    # Clean up temp file
                     Path(tmp_path).unlink(missing_ok=True)
 
             except Exception as e:
                 failure_count += 1
-                error_msg = f"{video_id}: {str(e)}"
-                errors.append(error_msg)
-                logger.error(f"Failed to regenerate GIF for {video_id}: {e}")
-
-        logger.info(
-            f"GIF regeneration complete: {success_count} succeeded, "
-            f"{failure_count} failed"
-        )
+                errors.append(f"{video_id}: {e}")
 
         return {
             "status": "completed",

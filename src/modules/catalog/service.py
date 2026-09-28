@@ -1,291 +1,360 @@
-"""Catalog service for media CRUD operations."""
+"""Catalog service for media CRUD operations (Digikam-compatible)."""
 
-import json
+import hashlib
 import logging
-import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import aiosqlite
+import aiomysql
+
+from src.database import (
+    IMAGE_CATEGORY_IMAGE,
+    IMAGE_CATEGORY_VIDEO,
+    IMAGE_STATUS_REMOVED,
+    IMAGE_STATUS_VISIBLE,
+    execute,
+    fetchall,
+    fetchone,
+    insert,
+)
 
 logger = logging.getLogger(__name__)
 
 
-async def generate_media_id() -> str:
-    """Generate unique media ID.
+def calculate_file_hash(file_bytes: bytes) -> str:
+    """Calculate SHA256 hash of file bytes.
+
+    Args:
+        file_bytes: File content.
 
     Returns:
-        UUID4 string.
+        SHA256 hex digest.
     """
-    return str(uuid.uuid4())
+    return hashlib.sha256(file_bytes).hexdigest()
 
 
 async def create_media(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
+    name: str,
     title: str,
     description: str,
     media_type: str,
     mime_type: str,
-    dropbox_path: str,
+    album_id: int,
+    storage_backend: str,
+    storage_path: str,
     file_size: int,
     metadata: dict[str, Any],
     source_id: int | None = None,
     source_path: str | None = None,
     tags: list[str] | None = None,
     file_hash: str | None = None,
-) -> str:
-    """Create new media entry in database.
+) -> int:
+    """Create new media entry in Digikam database.
+
+    Inserts into Images, ImageInformation, and optionally ImageMetadata.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
+        name: Filename.
         title: Media title.
         description: Media description.
         media_type: 'image' or 'video'.
         mime_type: MIME type.
-        dropbox_path: Path in Dropbox.
+        album_id: Album ID in Digikam.
+        storage_backend: Storage backend name ('nas' or 'dropbox').
+        storage_path: Relative path in storage backend.
         file_size: File size in bytes.
         metadata: Extracted metadata dict.
-        source_id: Source ID if imported from a source.
+        source_id: Source ID if imported.
         source_path: Path in source.
-        tags: List of tags.
+        tags: List of tag names.
         file_hash: SHA256 hash for deduplication.
 
     Returns:
-        Media ID.
-
-    Raises:
-        Exception: If database operation fails.
+        Image ID (Digikam auto-increment).
     """
-    media_id = await generate_media_id()
-    now = datetime.now(UTC).isoformat()
+    if media_type not in ("image", "video"):
+        raise ValueError(f"Invalid media_type: {media_type}. Must be 'image' or 'video'.")
 
-    # Convert metadata dict to JSON
-    metadata_json = json.dumps(metadata)
+    now = datetime.now(UTC)
+    category = IMAGE_CATEGORY_IMAGE if media_type == "image" else IMAGE_CATEGORY_VIDEO
 
-    await db.execute(
-        """
-        INSERT INTO media (
-            id, title, description, media_type, mime_type,
-            dropbox_path, source_id, source_path, file_size, file_hash,
-            width, height, duration_seconds, metadata_json,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            media_id,
-            title,
-            description,
-            media_type,
-            mime_type,
-            dropbox_path,
-            source_id,
-            source_path,
-            file_size,
-            file_hash,
-            metadata.get("width"),
-            metadata.get("height"),
-            metadata.get("duration_seconds"),
-            metadata_json,
-            now,
-            now,
-        ),
+    # Insert into Images table
+    image_id = await insert(
+        conn,
+        """INSERT INTO Images (album, name, status, category, modificationDate, fileSize, uniqueHash)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (album_id, name, IMAGE_STATUS_VISIBLE, category, now, file_size, file_hash),
     )
 
-    # Add tags if provided
+    # Insert into ImageInformation
+    fmt = metadata.get("format", mime_type.split("/")[-1])
+    await execute(
+        conn,
+        """INSERT INTO ImageInformation (imageid, creationDate, digitizationDate, width, height, format, colorDepth)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (image_id, now, now, metadata.get("width"), metadata.get("height"), fmt, metadata.get("color_depth")),
+    )
+
+    # Insert into ImageMetadata if EXIF data present
+    exif = metadata.get("exif", {})
+    if exif:
+        await execute(
+            conn,
+            """INSERT INTO ImageMetadata (imageid, make, model, lens, aperture, focalLength,
+               exposureTime, sensitivity)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                image_id,
+                exif.get("make"),
+                exif.get("model"),
+                exif.get("lens"),
+                exif.get("aperture"),
+                exif.get("focal_length"),
+                exif.get("exposure_time"),
+                exif.get("iso"),
+            ),
+        )
+
+    # Store media-library specific properties (storage_backend, storage_path, source info)
+    props = [
+        (image_id, "ml:storage_backend", storage_backend),
+        (image_id, "ml:storage_path", storage_path),
+        (image_id, "ml:title", title),
+        (image_id, "ml:mime_type", mime_type),
+    ]
+    if description:
+        props.append((image_id, "ml:description", description))
+    if source_id is not None:
+        props.append((image_id, "ml:source_id", str(source_id)))
+    if source_path:
+        props.append((image_id, "ml:source_path", source_path))
+
+    for prop in props:
+        await execute(
+            conn,
+            "INSERT INTO ImageProperties (imageid, property, value) VALUES (%s, %s, %s)",
+            prop,
+        )
+
+    # Add title as ImageComment (Digikam convention)
+    if title:
+        await execute(
+            conn,
+            """INSERT INTO ImageComments (imageid, type, language, author, date, comment)
+               VALUES (%s, 3, 'x-default', 'media-library', %s, %s)""",
+            (image_id, now, title),
+        )
+
+    # Add tags
     if tags:
         for tag_name in tags:
-            await add_tag_to_media(db, media_id, tag_name)
+            await add_tag_to_media(conn, image_id, tag_name)
 
-    await db.commit()
-    logger.info(f"Created media {media_id}: {title}")
-    return media_id
+    logger.info(f"Created media {image_id}: {name} (album={album_id}, backend={storage_backend})")
+    return image_id
 
 
-async def get_media(db: aiosqlite.Connection, media_id: str) -> dict[str, Any] | None:
-    """Get media by ID with tags.
+async def get_media(conn: aiomysql.Connection, image_id: int) -> dict[str, Any] | None:
+    """Get media by ID with all joined data.
 
     Args:
-        db: Database connection.
-        media_id: Media ID.
+        conn: Database connection.
+        image_id: Digikam image ID.
 
     Returns:
-        Media dict with tags list, or None if not found.
+        Media dict with tags, properties, or None if not found.
     """
-    cursor = await db.execute(
-        "SELECT * FROM media WHERE id = ?",
-        (media_id,),
+    row = await fetchone(
+        conn,
+        """SELECT i.id, i.album, i.name, i.status, i.category, i.modificationDate,
+                  i.fileSize, i.uniqueHash,
+                  ii.width, ii.height, ii.format, ii.rating, ii.orientation,
+                  ii.creationDate, ii.colorDepth,
+                  a.relativePath as album_path
+           FROM Images i
+           LEFT JOIN ImageInformation ii ON i.id = ii.imageid
+           LEFT JOIN Albums a ON i.album = a.id
+           WHERE i.id = %s AND i.status = %s""",
+        (image_id, IMAGE_STATUS_VISIBLE),
     )
-    row = await cursor.fetchone()
     if not row:
         return None
 
     media = dict(row)
-    media["metadata"] = json.loads(media.get("metadata_json", "{}"))
-    del media["metadata_json"]
+
+    # Fetch ml: properties
+    props = await fetchall(
+        conn,
+        "SELECT property, value FROM ImageProperties WHERE imageid = %s AND property LIKE 'ml:%%'",
+        (image_id,),
+    )
+    for p in props:
+        key = p["property"].replace("ml:", "")
+        media[key] = p["value"]
 
     # Fetch tags
-    tags_cursor = await db.execute(
-        """
-        SELECT t.name FROM tags t
-        JOIN media_tags mt ON t.id = mt.tag_id
-        WHERE mt.media_id = ?
-        """,
-        (media_id,),
+    tags = await fetchall(
+        conn,
+        """SELECT t.name FROM Tags t
+           JOIN ImageTags it ON t.id = it.tagid
+           WHERE it.imageid = %s AND t.pid >= 0""",
+        (image_id,),
     )
-    tags_rows = await tags_cursor.fetchall()
-    media["tags"] = [dict(r)["name"] for r in tags_rows]
+    media["tags"] = [t["name"] for t in tags]
 
     return media
 
 
 async def list_media(
-    db: aiosqlite.Connection,
+    conn: aiomysql.Connection,
+    album_id: int | None = None,
+    media_type: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
-    """List all media with pagination.
+    """List media with pagination.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
+        album_id: Filter by album.
+        media_type: Filter by 'image' or 'video'.
         limit: Max items per page.
         offset: Page offset.
 
     Returns:
         Tuple of (media list, total count).
     """
-    # Get total count
-    count_cursor = await db.execute("SELECT COUNT(*) as cnt FROM media")
-    count_row = await count_cursor.fetchone()
-    total = dict(count_row)["cnt"] if count_row else 0
+    where_parts = ["i.status = %s"]
+    params: list[Any] = [IMAGE_STATUS_VISIBLE]
 
-    # Fetch page
-    cursor = await db.execute(
-        "SELECT * FROM media ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        (limit, offset),
+    if album_id is not None:
+        where_parts.append("i.album = %s")
+        params.append(album_id)
+    if media_type:
+        cat = IMAGE_CATEGORY_IMAGE if media_type == "image" else IMAGE_CATEGORY_VIDEO
+        where_parts.append("i.category = %s")
+        params.append(cat)
+
+    where_sql = " AND ".join(where_parts)
+
+    # Count
+    count_row = await fetchone(conn, f"SELECT COUNT(*) as cnt FROM Images i WHERE {where_sql}", tuple(params))
+    total = count_row["cnt"] if count_row else 0
+
+    # Fetch
+    rows = await fetchall(
+        conn,
+        f"""SELECT i.id, i.album, i.name, i.category, i.fileSize, i.uniqueHash,
+                   ii.width, ii.height, ii.format, ii.rating, ii.creationDate,
+                   a.relativePath as album_path
+            FROM Images i
+            LEFT JOIN ImageInformation ii ON i.id = ii.imageid
+            LEFT JOIN Albums a ON i.album = a.id
+            WHERE {where_sql}
+            ORDER BY ii.creationDate DESC
+            LIMIT %s OFFSET %s""",
+        tuple(params) + (limit, offset),
     )
-    rows = await cursor.fetchall()
 
-    media_list = []
+    results = []
     for row in rows:
         media = dict(row)
-        media["metadata"] = json.loads(media.get("metadata_json", "{}"))
-        del media["metadata_json"]
-
-        # Fetch tags
-        tags_cursor = await db.execute(
-            """
-            SELECT t.name FROM tags t
-            JOIN media_tags mt ON t.id = mt.tag_id
-            WHERE mt.media_id = ?
-            """,
+        # Fetch properties
+        props = await fetchall(
+            conn,
+            "SELECT property, value FROM ImageProperties WHERE imageid = %s AND property LIKE 'ml:%%'",
             (media["id"],),
         )
-        tags_rows = await tags_cursor.fetchall()
-        media["tags"] = [dict(r)["name"] for r in tags_rows]
-        media_list.append(media)
+        for p in props:
+            media[p["property"].replace("ml:", "")] = p["value"]
+        # Fetch tags
+        tags = await fetchall(
+            conn,
+            "SELECT t.name FROM Tags t JOIN ImageTags it ON t.id = it.tagid WHERE it.imageid = %s AND t.pid >= 0",
+            (media["id"],),
+        )
+        media["tags"] = [t["name"] for t in tags]
+        results.append(media)
 
-    return media_list, total
+    return results, total
 
 
-async def delete_media(db: aiosqlite.Connection, media_id: str) -> bool:
-    """Delete media by ID (cascades to tags).
+async def delete_media(conn: aiomysql.Connection, image_id: int) -> bool:
+    """Delete media by ID (mark as removed in Digikam).
 
     Args:
-        db: Database connection.
-        media_id: Media ID.
+        conn: Database connection.
+        image_id: Image ID.
 
     Returns:
-        True if deleted, False if not found.
+        True if deleted.
     """
-    cursor = await db.execute(
-        "DELETE FROM media WHERE id = ?",
-        (media_id,),
-    )
-    await db.commit()
-    return cursor.rowcount > 0
+    affected = await execute(conn, "UPDATE Images SET status = %s WHERE id = %s", (IMAGE_STATUS_REMOVED, image_id))
+    if affected > 0:
+        logger.info(f"Deleted media {image_id}")
+    return affected > 0
 
 
-async def update_tags(
-    db: aiosqlite.Connection,
-    media_id: str,
-    tags: list[str],
-) -> None:
+async def update_tags(conn: aiomysql.Connection, image_id: int, tags: list[str]) -> None:
     """Replace media tags.
 
     Args:
-        db: Database connection.
-        media_id: Media ID.
+        conn: Database connection.
+        image_id: Image ID.
         tags: New list of tag names.
 
     Raises:
-        Exception: If media not found or database operation fails.
+        ValueError: If media not found.
     """
-    # Verify media exists
-    cursor = await db.execute("SELECT id FROM media WHERE id = ?", (media_id,))
-    if not await cursor.fetchone():
-        raise ValueError(f"Media {media_id} not found")
+    row = await fetchone(conn, "SELECT id FROM Images WHERE id = %s", (image_id,))
+    if not row:
+        raise ValueError(f"Media {image_id} not found")
 
-    # Remove existing tags
-    await db.execute("DELETE FROM media_tags WHERE media_id = ?", (media_id,))
+    await execute(conn, "DELETE FROM ImageTags WHERE imageid = %s", (image_id,))
 
-    # Add new tags
     for tag_name in tags:
-        await add_tag_to_media(db, media_id, tag_name)
+        await add_tag_to_media(conn, image_id, tag_name)
 
-    await db.commit()
-    logger.info(f"Updated tags for media {media_id}")
+    logger.info(f"Updated tags for media {image_id}: {tags}")
 
 
-async def add_tag_to_media(db: aiosqlite.Connection, media_id: str, tag_name: str) -> None:
-    """Add a tag to a media (create tag if not exists).
+async def add_tag_to_media(conn: aiomysql.Connection, image_id: int, tag_name: str) -> None:
+    """Add a tag to media (create tag if not exists).
 
     Args:
-        db: Database connection.
-        media_id: Media ID.
+        conn: Database connection.
+        image_id: Image ID.
         tag_name: Tag name.
     """
-    # Get or create tag
-    cursor = await db.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
-    tag_row = await cursor.fetchone()
+    tag_row = await fetchone(conn, "SELECT id FROM Tags WHERE name = %s AND pid >= 0", (tag_name,))
     if tag_row:
-        tag_id = dict(tag_row)["id"]
+        tag_id = tag_row["id"]
     else:
-        await db.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
-        await db.commit()
-        cursor = await db.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
-        tag_row = await cursor.fetchone()
-        if tag_row:
-            tag_id = dict(tag_row)["id"]
-        else:
-            raise ValueError(f"Failed to create tag: {tag_name}")
+        tag_id = await insert(conn, "INSERT INTO Tags (pid, name) VALUES (0, %s)", (tag_name,))
 
-    # Add media-tag relationship
     try:
-        await db.execute(
-            "INSERT INTO media_tags (media_id, tag_id) VALUES (?, ?)",
-            (media_id, tag_id),
-        )
+        await execute(conn, "INSERT IGNORE INTO ImageTags (imageid, tagid) VALUES (%s, %s)", (image_id, tag_id))
     except Exception:
-        pass  # Ignore duplicates
+        pass  # Duplicate
 
 
-async def get_all_tags(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+async def get_all_tags(conn: aiomysql.Connection) -> list[dict[str, Any]]:
     """Get all tags with media count.
 
     Args:
-        db: Database connection.
+        conn: Database connection.
 
     Returns:
         List of tag dicts with id, name, count.
     """
-    cursor = await db.execute(
-        """
-        SELECT t.id, t.name, COUNT(mt.media_id) as count
-        FROM tags t
-        LEFT JOIN media_tags mt ON t.id = mt.tag_id
-        GROUP BY t.id, t.name
-        ORDER BY t.name
-        """,
+    return await fetchall(
+        conn,
+        """SELECT t.id, t.name, t.pid, COUNT(it.imageid) as count
+           FROM Tags t
+           LEFT JOIN ImageTags it ON t.id = it.tagid
+           WHERE t.pid >= 0
+           GROUP BY t.id, t.name, t.pid
+           ORDER BY count DESC""",
     )
-    rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
